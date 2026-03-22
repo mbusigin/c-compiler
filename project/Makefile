@@ -38,6 +38,7 @@ TEST_TYPES = $(BUILD_DIR)/test_types
 TEST_SYM = $(BUILD_DIR)/test_symtab
 TEST_CGEN = $(BUILD_DIR)/test_codegen
 TEST_FULL = $(BUILD_DIR)/test_full
+TEST_COMP = $(BUILD_DIR)/test_comprehensive
 
 .PHONY: all clean test test-all test-unit test-integration test-regression debug release help version info
 
@@ -70,14 +71,15 @@ test: all
 	@echo "--- Regression Tests ---"
 	@$(MAKE) test-regression 2>&1 | grep -E "Tests|PASS|FAIL"
 	@echo ""
+	@echo "--- Comprehensive Tests ---"
+	@$(MAKE) test-comprehensive 2>&1 | grep -E "Tests|PASS|FAIL"
+	@echo ""
 	@echo "========================================="
 	@echo "Test suite complete"
 	@echo "========================================="
 	@echo ""
 	@echo "Test summary:"
-	@echo "  test_unit: 5 passed, 1 failed"
-	@echo "  test_integration: 5 passed, 0 failed"
-	@echo "  test_regression: 18 passed, 13 failed"
+	@$(MAKE) test-comprehensive 2>&1 | tail -6
 
 # Build test directory
 $(BUILD_DIR):
@@ -103,6 +105,12 @@ test-regression: $(COMPILER) $(BUILD_DIR)
 	@echo "Running regression tests..."
 	@$(CC) $(CFLAGS) -o $(TEST_FULL) $(SRC_DIR)/tests/test_full.c -I $(SRC_DIR) -lm
 	@./$(TEST_FULL); true
+
+# Run comprehensive tests
+test-comprehensive: $(COMPILER) $(BUILD_DIR)
+	@echo "Running comprehensive tests..."
+	@$(CC) $(CFLAGS) -o $(TEST_COMP) $(SRC_DIR)/tests/test_comprehensive.c -I $(SRC_DIR) -lm
+	@./$(TEST_COMP); true
 
 # Show version
 version: $(COMPILER)
