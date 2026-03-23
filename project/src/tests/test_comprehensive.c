@@ -190,7 +190,7 @@ int main() {
     
     // BREAK/CONTINUE
     printf("\n--- Break/Continue ---\n");
-    TEST("Break", "int main() { for (int i = 0; i < 100; i++) { if (i == 5) break; } return i; }", 5);
+    TEST("Break", "int main() { int i; for (i = 0; i < 100; i++) { if (i == 5) break; } return i; }", 5);
     TEST("Continue", "int main() { int s = 0; for (int i = 0; i < 5; i++) { if (i == 2) continue; s++; } return s; }", 4);
     
     // TERNARY

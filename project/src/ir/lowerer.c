@@ -588,6 +588,7 @@ static void lower_variable_decl(ASTNode *node) {
 // Lower a function call
 static IRValue *lower_call_expr(ASTNode *node) {
     IRValue *result = ir_value_create(IR_VALUE_INT);
+    result->is_temp = true;  // Mark result as temp immediately
     IRInstruction *instr = ir_instr_create(IR_CALL);
     instr->result = result;
 
@@ -595,8 +596,43 @@ static IRValue *lower_call_expr(ASTNode *node) {
         instr->label = node->data.call.callee->data.identifier.name;
     }
 
+    // Track temps that need to be saved to stack
+    int temp_slot = -1;
+    
     for (size_t i = 0; i < list_size(node->data.call.args); i++) {
         IRValue *arg = lower_expression(list_get(node->data.call.args, i));
+        
+        // If this argument is a temp (result of a nested call), save it to stack
+        // before evaluating the next argument to avoid clobbering x8
+        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1) {
+            // Allocate a stack slot for this temp
+            temp_slot = locals_size;
+            locals_size += 8;
+            
+            // Store the temp to the stack slot
+            IRValue *store_result = ir_value_create(IR_VALUE_INT);
+            store_result->offset = temp_slot;
+            IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+            store_i->result = store_result;
+            add_instr(store_i);
+            
+            // Create a new IRValue that points to the stack slot
+            IRValue *saved_arg = ir_value_create(IR_VALUE_INT);
+            saved_arg->is_constant = false;
+            saved_arg->is_temp = false;
+            saved_arg->param_reg = -2;  // Mark as local variable (stack-relative)
+            saved_arg->offset = temp_slot;
+            arg = saved_arg;
+            
+            // Also emit IR_ALLOCA for consistency
+            IRValue *size_val = ir_value_create(IR_VALUE_INT);
+            size_val->data.int_val = 8;
+            size_val->is_constant = true;
+            IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
+            alloc_instr->result = size_val;
+            add_instr(alloc_instr);
+        }
+        
         if (instr->num_args < 4) {
             instr->args[instr->num_args++] = arg;
         }
@@ -890,6 +926,10 @@ static void lower_statement(ASTNode *node) {
             break;
         }
         default:
+            // Handle expression nodes (for loop init can be an expression)
+            if (node->type >= AST_BINARY_EXPR && node->type <= AST_COMMA_EXPR) {
+                lower_expression(node);
+            }
             break;
     }
 }

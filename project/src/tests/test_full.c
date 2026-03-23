@@ -132,7 +132,7 @@ int main(int argc, char **argv) {
     printf("\n--- Basic Control Flow ---\n");
     TEST("Simple return 0", "int main() { return 0; }", 0);
     TEST("Simple return 42", "int main() { return 42; }", 42);
-    TEST("Return negative", "int main() { return -5; }", -5);
+    TEST("Return negative", "int main() { return -5; }", 251);  // -5 wraps to 251 in unsigned 8-bit exit code
     
     printf("\n--- Arithmetic Operations ---\n");
     TEST("Addition", "int main() { return 2 + 3; }", 5);
