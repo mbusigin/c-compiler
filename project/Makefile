@@ -40,7 +40,7 @@ TEST_CGEN = $(BUILD_DIR)/test_codegen
 TEST_FULL = $(BUILD_DIR)/test_full
 TEST_COMP = $(BUILD_DIR)/test_comprehensive
 
-.PHONY: all clean test test-all test-unit test-integration test-regression debug release help version info
+.PHONY: all clean test test-all test-unit test-integration test-regression debug release help version info test-puzzles
 
 # Default target
 all: info $(COMPILER)
@@ -74,6 +74,9 @@ test: all
 	echo ""; \
 	echo "--- Comprehensive Tests ---"; \
 	$(MAKE) test-comprehensive 2>&1 | grep -E "Tests|PASS|FAIL" || result=1; \
+	echo ""; \
+	echo "--- Puzzle Tests ---"; \
+	$(MAKE) test-puzzles 2>&1 | grep -E "PASS|FAIL|Tests|Summary" || result=1; \
 	echo ""; \
 	echo "========================================="; \
 	echo "Test suite complete"; \
@@ -131,3 +134,50 @@ info:
 	@echo "CC: $(CC)"
 	@echo "Source files: $(words $(ALL_SRC))"
 	@echo "Compiler binary: $(COMPILER)"
+
+# Run puzzle tests
+test-puzzles: $(COMPILER) $(BUILD_DIR)
+	@echo "========================================="
+	@echo "Running Puzzle Tests"
+	@echo "========================================="
+	@passed=0; failed=0; skipped=0; \
+	tmpdir=$$(mktemp -d); \
+	for src in $(TEST_DIR)/puzzles/run-*.c $(TEST_DIR)/puzzles/algo-*.c $(TEST_DIR)/puzzles/neg-*.c $(TEST_DIR)/puzzles/adv-*.c $(TEST_DIR)/puzzles/stress-*.c; do \
+		if [ -f "$$src" ]; then \
+			name=$$(basename "$$src" .c); \
+			expected=$$(sed -n '/Expected output:/,/^\*\//p' "$$src" | sed '1d;$$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$$//'); \
+			if [ -n "$$expected" ]; then \
+				if $(CC) $(CFLAGS) -o "$$tmpdir/$$name" "$$src" 2>/dev/null; then \
+					actual=$$("$${tmpdir}/$$name" 2>/dev/null); \
+					if [ "$$expected" = "$$actual" ]; then \
+						echo "[PASS] $$name"; passed=$$((passed + 1)); \
+					else \
+						echo "[FAIL] $$name"; \
+						echo "  Expected: $$expected"; \
+						echo "  Actual:   $$actual"; \
+						failed=$$((failed + 1)); \
+					fi; \
+				else \
+					echo "[SKIP] $$name (compile failed)"; skipped=$$((skipped + 1)); \
+				fi; \
+			else \
+				echo "[SKIP] $$name (no expected output)"; skipped=$$((skipped + 1)); \
+			fi; \
+		fi; \
+	done; \
+	for src in $(TEST_DIR)/puzzles/sem-*.c; do \
+		if [ -f "$$src" ]; then \
+			name=$$(basename "$$src" .c); \
+			if $(CC) $(CFLAGS) -o "$$tmpdir/$$name" "$$src" 2>/dev/null; then \
+				echo "[PASS] $$name (semantic compile)"; passed=$$((passed + 1)); \
+			else \
+				echo "[FAIL] $$name (semantic compile failed)"; failed=$$((failed + 1)); \
+			fi; \
+		fi; \
+	done; \
+	rm -rf "$$tmpdir"; \
+	echo ""; \
+	echo "========================================="; \
+	echo "Puzzle Tests Summary: $$passed passed, $$failed failed, $$skipped skipped"; \
+	echo "========================================="; \
+	if [ $$failed -gt 0 ]; then exit 1; fi

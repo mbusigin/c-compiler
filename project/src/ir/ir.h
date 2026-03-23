@@ -20,7 +20,12 @@ typedef enum {
     IR_LOAD_STACK, IR_STORE_STACK,
     IR_STORE_PARAM,  // Store parameter register to stack slot
     IR_SAVE_X8,  // Save x8 to x21 (for post-increment original value)
-    IR_RESTORE_X8_RESULT  // Restore result from x21 after post-increment
+    IR_RESTORE_X8_RESULT,  // Restore result from x21 after post-increment
+    IR_LOAD_OFFSET,   // Load from [base_ptr + offset*4]
+    IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
+    IR_STORE_INDIRECT, // Store w8 to [x21] (address in x21, value in x8)
+    IR_LEA,           // Load effective address: x8 = sp + offset
+    IR_ADD_X21        // x8 = x21 + x8 (add saved address to offset)
 } IROpcode;
 
 typedef enum { IR_VALUE_INT, IR_VALUE_FLOAT, IR_VALUE_PTR, IR_VALUE_STRING } IRValueKind;
@@ -31,6 +36,7 @@ typedef struct IRValue {
     int string_index;  // For string literals
     bool is_constant;  // True if this is a compile-time constant
     bool is_temp;     // True if this is a temporary (result of previous instruction)
+    bool is_address;  // True if this value is an address (from LEA)
     int param_reg;     // For parameters: which register (x0-x3) it's in; -2 = local var
     int offset;        // For local variables: stack offset
 } IRValue;

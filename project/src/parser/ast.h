@@ -76,6 +76,7 @@ typedef struct Type {
     TypeKind kind;
     size_t size;
     size_t align;
+    bool is_unsigned;  // For unsigned integer types
     struct Type *base;  // For pointer/array
     size_t array_size;  // For arrays
     struct Type *return_type;

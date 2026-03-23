@@ -24,8 +24,33 @@ static const char *op_name(IROpcode op) {
         case IR_MUL: return "mul";
         case IR_DIV: return "div";
         case IR_MOD: return "mod";
+        case IR_AND: return "and";
+        case IR_OR: return "or";
+        case IR_XOR: return "xor";
+        case IR_SHL: return "shl";
+        case IR_SHR: return "shr";
+        case IR_NOT: return "not";
+        case IR_NEG: return "neg";
         case IR_CMP: return "cmp";
+        case IR_CMP_LT: return "cmp_lt";
+        case IR_CMP_GT: return "cmp_gt";
+        case IR_CMP_LE: return "cmp_le";
+        case IR_CMP_GE: return "cmp_ge";
+        case IR_CMP_EQ: return "cmp_eq";
+        case IR_CMP_NE: return "cmp_ne";
+        case IR_BOOL_AND: return "bool_and";
+        case IR_BOOL_OR: return "bool_or";
         case IR_CONST_INT: return "const_int";
+        case IR_LOAD_STACK: return "load_stack";
+        case IR_STORE_STACK: return "store_stack";
+        case IR_STORE_PARAM: return "store_param";
+        case IR_SAVE_X8: return "save_x8";
+        case IR_RESTORE_X8_RESULT: return "restore_x8_result";
+        case IR_LOAD_OFFSET: return "load_offset";
+        case IR_STORE_OFFSET: return "store_offset";
+        case IR_STORE_INDIRECT: return "store_indirect";
+        case IR_LEA: return "lea";
+        case IR_ADD_X21: return "add_x21";
         default: return "unknown";
     }
 }

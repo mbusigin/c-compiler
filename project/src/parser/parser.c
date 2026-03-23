@@ -29,10 +29,30 @@ static void advance(Parser *p) {
 }
 static TokenType peek(Parser *p) { return p->current.type; }
 static bool check(Parser *p, TokenType t) { return peek(p) == t; }
+
+// Look at the token after the current one without consuming it
+static TokenType peek_next(Parser *p) {
+    // Save lexer state
+    size_t saved_pos = p->lexer->position;
+    int saved_line = p->lexer->line;
+    int saved_col = p->lexer->column;
+    
+    // Get next token
+    Token next = lexer_next_token(p->lexer);
+    TokenType result = next.type;
+    
+    // Restore lexer state
+    p->lexer->position = saved_pos;
+    p->lexer->line = saved_line;
+    p->lexer->column = saved_col;
+    
+    return result;
+}
+
 static bool is_type_keyword(TokenType t) {
     return t == TOKEN_INT || t == TOKEN_CHAR || t == TOKEN_VOID || t == TOKEN_FLOAT ||
            t == TOKEN_DOUBLE || t == TOKEN_SHORT || t == TOKEN_LONG || t == TOKEN_SIGNED ||
-           t == TOKEN_UNSIGNED || t == TOKEN_EXTERN;
+           t == TOKEN_UNSIGNED || t == TOKEN_EXTERN || t == TOKEN_STATIC || t == TOKEN_CONST;
 }
 
 // Copy a string from the current token's lexeme using the token's length
@@ -47,7 +67,25 @@ static char *token_name(Parser *p) {
 // Type parsing
 static Type *parse_type(Parser *p) {
     TypeKind kind = TYPE_INT;
+    bool is_unsigned = false;
     
+    // Handle type qualifiers (const)
+    while (check(p, TOKEN_CONST)) {
+        advance(p);  // skip 'const'
+    }
+    
+    // Handle signed/unsigned modifiers
+    while (check(p, TOKEN_SIGNED) || check(p, TOKEN_UNSIGNED)) {
+        if (check(p, TOKEN_UNSIGNED)) {
+            is_unsigned = true;
+            advance(p);
+        } else if (check(p, TOKEN_SIGNED)) {
+            is_unsigned = false;
+            advance(p);
+        }
+    }
+    
+    // Then handle the base type
     if (check(p, TOKEN_VOID)) { advance(p); kind = TYPE_VOID; }
     else if (check(p, TOKEN_CHAR)) { advance(p); kind = TYPE_CHAR; }
     else if (check(p, TOKEN_FLOAT)) { advance(p); kind = TYPE_FLOAT; }
@@ -58,11 +96,12 @@ static Type *parse_type(Parser *p) {
         if (check(p, TOKEN_LONG)) { advance(p); kind = TYPE_LONGLONG; }
         else kind = TYPE_LONG;
     }
-    else if (check(p, TOKEN_SIGNED)) { advance(p); kind = TYPE_INT; }
-    else if (check(p, TOKEN_UNSIGNED)) { advance(p); kind = TYPE_INT; }
-    else { advance(p); kind = TYPE_INT; }  // Default to int for unknown types
+    else if (check(p, TOKEN_INT)) { advance(p); kind = TYPE_INT; }
+    // If we had unsigned/signed but no base type, default to int
+    // (e.g., "unsigned x" means "unsigned int x")
     
     Type *t = type_create(kind);
+    t->is_unsigned = is_unsigned;
     
     // Handle pointer suffix
     while (check(p, TOKEN_STAR)) {
@@ -152,7 +191,7 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
 
 // Parse declaration
 static ASTNode *parse_declaration(Parser *p) {
-    // Handle extern keyword
+    // Handle storage class specifiers (extern, static)
     if (check(p, TOKEN_EXTERN)) {
         advance(p); // consume 'extern'
         // Parse the type and function name
@@ -187,6 +226,12 @@ static ASTNode *parse_declaration(Parser *p) {
         return ast_create(AST_NULL_STMT);
     }
     
+    // Handle static keyword
+    if (check(p, TOKEN_STATIC)) {
+        advance(p); // consume 'static'
+        // Continue parsing the declaration after 'static'
+    }
+    
     Type *base_type = parse_type(p);
     
     // Get identifier
@@ -207,16 +252,40 @@ static ASTNode *parse_declaration(Parser *p) {
         return func;
     }
     
+    // Handle array declarator: int arr[5]
+    while (check(p, TOKEN_LBRACKET)) {
+        advance(p);  // consume '['
+        // Skip the array size expression (we don't support it yet, just skip to ']')
+        while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) {
+            advance(p);
+        }
+        if (check(p, TOKEN_RBRACKET)) advance(p);  // consume ']'
+        // Convert to pointer type
+        Type *ptr = type_pointer(base_type);
+        base_type = ptr;
+    }
+    
     // Variable declaration
     ASTNode *decl = ast_create(AST_VARIABLE_DECL);
     decl->data.variable.var_type = base_type;
     decl->data.variable.name = name;
     decl->data.variable.init = NULL;
     
-    // Initializer
+    // Initializer - for now, skip initializer lists
     if (check(p, TOKEN_ASSIGN)) {
         advance(p);
-        decl->data.variable.init = parse_assignment_expr(p);
+        if (check(p, TOKEN_LBRACE)) {
+            // Skip initializer list: { ... }
+            advance(p);  // consume '{'
+            int depth = 1;
+            while (depth > 0 && !check(p, TOKEN_EOF)) {
+                if (check(p, TOKEN_LBRACE)) depth++;
+                else if (check(p, TOKEN_RBRACE)) depth--;
+                advance(p);
+            }
+        } else {
+            decl->data.variable.init = parse_assignment_expr(p);
+        }
     }
     
     expect(p, TOKEN_SEMICOLON, "expected ';'");
@@ -354,6 +423,78 @@ static ASTNode *parse_assignment_expr(Parser *p) {
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
+    if (check(p, TOKEN_MINUS_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_SUB;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_STAR_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_MUL;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_SLASH_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_DIV;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_PERCENT_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_MOD;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_LSHIFT_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_LSHIFT;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_RSHIFT_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_RSHIFT;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_AMP_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_BITAND;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_PIPE_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_BITOR;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_CARET_EQ)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
+        node->data.assignment.op = OP_BITXOR;
+        node->data.assignment.left = left;
+        node->data.assignment.right = parse_assignment_expr(p);
+        return node;
+    }
     
     return left;
 }
@@ -434,7 +575,7 @@ static ASTNode *parse_binary_expr(Parser *p, int min_prec) {
 }
 
 static ASTNode *parse_cast_expr(Parser *p) {
-    if (check(p, TOKEN_LPAREN) && is_type_keyword(peek(p))) {
+    if (check(p, TOKEN_LPAREN) && is_type_keyword(peek_next(p))) {
         advance(p); // consume '('
         Type *t = parse_type(p);
         expect(p, TOKEN_RPAREN, "expected ')'");

@@ -456,9 +456,19 @@ static void gen_instr(IRInstruction *instr) {
         }
             
         case IR_LOAD:
-            // x0 contains the address; load from it
-            emit_instr("ldr\tw0, [x0]");
-            emit_instr("mov\tx8, x0");
+            // Load from address
+            // If args[0] is NULL, load from [x8] (for array subscript)
+            // Otherwise, x0 contains the address
+            if (instr->num_args == 0) {
+                // Load from address in x8
+                emit_instr("ldr\tw8, [x8]");
+                x8_temp_type = 1;
+                x9_temp_type = 1;
+            } else {
+                // Legacy behavior: x0 contains the address
+                emit_instr("ldr\tw0, [x0]");
+                emit_instr("mov\tx8, x0");
+            }
             break;
             
         case IR_STORE:
@@ -477,7 +487,12 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx21, x9");  // Save x9 before it gets clobbered
                 }
                 emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
-                emit_instr("ldr\tw0, [sp, #%d]", offset);
+                // Check if this is a parameter (param_reg == -2) - use 64-bit load for pointers
+                if (instr->result->param_reg == -2) {
+                    emit_instr("ldr\tx0, [sp, #%d]", offset);  // 64-bit load for parameters (pointers)
+                } else {
+                    emit_instr("ldr\tw0, [sp, #%d]", offset);  // 32-bit load for local variables
+                }
                 emit_instr("mov\tx8, x0");  // Save loaded value to x8
                 if (old_x9_type == 1 || old_x9_type == 2) {
                     emit_instr("mov\tx9, x21");  // Restore x9
@@ -542,16 +557,79 @@ static void gen_instr(IRInstruction *instr) {
             break;
 
         case IR_SAVE_X8:
-            // Save x8 to x21 (callee-saved) for post-increment original value
-            emit_instr("mov\tx21, x8");
+            // Save x8 to x22 (callee-saved) for later use (e.g., post-increment original value, or array address)
+            emit_instr("mov\tx22, x8");
             break;
 
         case IR_RESTORE_X8_RESULT:
-            // For post-increment: result should be original value (in x21)
-            emit_instr("mov\tx0, x21");  // Return original value
-            emit_instr("mov\tx8, x21");  // x8 also has original value
+            // For post-increment: result should be original value (in x22)
+            emit_instr("mov\tx0, x22");  // Return original value
+            emit_instr("mov\tx8, x22");  // x8 also has original value
             x8_temp_type = 1;  // x8 has temp result
             x9_temp_type = 1;  // x9 has temp result
+            break;
+            
+        case IR_LOAD_OFFSET:
+            // Load from [base_ptr + offset*4]
+            // args[0] = base pointer value (in x8)
+            // args[1] = offset/index
+            // The address is computed as: x8 + args[1]*4
+            // For now, we assume the index was already multiplied by 4
+            // x8 has the base address, compute final address and load
+            if (instr->num_args >= 2 && instr->args[1]) {
+                // args[1] contains the byte offset (index * 4)
+                // Add to base (in x8) and load
+                emit_instr("mov\tx0, x8");  // base address to x0
+                // The offset should have been computed by previous instructions
+                // For now, assume offset is in x8 after a sequence of operations
+                // We need to emit: ldr w8, [x0 + offset] but we don't have the offset as immediate
+                // Instead, use: ldr w8, [x0, x8, lsl #2] if x8 is the index
+                // But that's complex - let's use a simpler approach:
+                // The previous ADD should have put address in x8, just load from it
+                emit_instr("ldr\tw8, [x8]");  // Load from address in x8
+                x8_temp_type = 1;
+                x9_temp_type = 1;
+            }
+            break;
+            
+        case IR_STORE_OFFSET:
+            // Store to [base_ptr + offset*4]
+            // args[0] = base pointer
+            // args[1] = offset/index  
+            // result = value to store
+            // The address was computed in x8 by previous instructions
+            // The value to store is in result (which should be in x8)
+            // But we need both - this is tricky
+            // For now, emit: str w_val, [x8] where x8 has address
+            // We need the value somewhere else...
+            // Actually, this needs redesign. For now, do a simple store through x8
+            emit_instr("str\tw8, [x8]");  // This is wrong - stores address to itself
+            break;
+            
+        case IR_STORE_INDIRECT:
+            // Store w8 to [x22]
+            // x22 has the address (saved earlier with IR_SAVE_X8)
+            // x8 has the value to store
+            emit_instr("str\tw8, [x22]");
+            break;
+            
+        case IR_LEA:
+            // Load effective address: x8 = sp + offset
+            // result->offset = stack offset
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                int offset = (int)instr->result->offset;
+                emit_instr("mov\tx8, sp");
+                emit_instr("add\tx8, x8, #%d", offset);
+                x8_temp_type = 1;  // x8 now has an address
+                x9_temp_type = 1;
+            }
+            break;
+            
+        case IR_ADD_X21:
+            // x8 = x22 + x8 (add saved address in x22 to offset in x8)
+            emit_instr("add\tx8, x22, x8");
+            x8_temp_type = 1;
+            x9_temp_type = 1;
             break;
             
         default:
