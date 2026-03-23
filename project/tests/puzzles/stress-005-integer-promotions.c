@@ -1,5 +1,5 @@
 /* Expected output:
-1 0
+1 1
 */
 #include <stdio.h>
 
