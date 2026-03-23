@@ -7,4 +7,4 @@ project/build/
 *.json
 *.png
 *.html
-tests/
+tests
