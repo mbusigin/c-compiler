@@ -61,25 +61,27 @@ test: all
 	@echo "Running C Compiler Test Suite"
 	@echo "========================================="
 	@mkdir -p $(BUILD_DIR)
-	@echo ""
-	@echo "--- Unit Tests ---"
-	@$(MAKE) test-unit 2>&1 | grep -E "Running|Passed|Failed|Total|\[PASS\]|\[FAIL\]"
-	@echo ""
-	@echo "--- Integration Tests ---"
-	@$(MAKE) test-integration 2>&1 | grep -E "Test|Tests|PASS|FAIL" | head -20
-	@echo ""
-	@echo "--- Regression Tests ---"
-	@$(MAKE) test-regression 2>&1 | grep -E "Tests|PASS|FAIL"
-	@echo ""
-	@echo "--- Comprehensive Tests ---"
-	@$(MAKE) test-comprehensive 2>&1 | grep -E "Tests|PASS|FAIL"
-	@echo ""
-	@echo "========================================="
-	@echo "Test suite complete"
-	@echo "========================================="
-	@echo ""
-	@echo "Test summary:"
-	@$(MAKE) test-comprehensive 2>&1 | tail -6
+	@result=0; \
+	echo ""; \
+	echo "--- Unit Tests ---"; \
+	$(MAKE) test-unit 2>&1 | grep -E "Running|Passed|Failed|Total|\[PASS\]|\[FAIL\]" || result=1; \
+	echo ""; \
+	echo "--- Integration Tests ---"; \
+	$(MAKE) test-integration 2>&1 | grep -E "Test|Tests|PASS|FAIL" | head -20 || result=1; \
+	echo ""; \
+	echo "--- Regression Tests ---"; \
+	$(MAKE) test-regression 2>&1 | grep -E "Tests|PASS|FAIL" || result=1; \
+	echo ""; \
+	echo "--- Comprehensive Tests ---"; \
+	$(MAKE) test-comprehensive 2>&1 | grep -E "Tests|PASS|FAIL" || result=1; \
+	echo ""; \
+	echo "========================================="; \
+	echo "Test suite complete"; \
+	echo "========================================="; \
+	echo ""; \
+	echo "Test summary:"; \
+	$(MAKE) test-comprehensive 2>&1 | tail -6; \
+	exit $$result
 
 # Build test directory
 $(BUILD_DIR):
@@ -88,29 +90,32 @@ $(BUILD_DIR):
 # Run unit tests
 test-unit: all $(BUILD_DIR)
 	@echo "Running unit tests..."
-	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_lexer tests/unit/test_lexer.c common/*.c lexer/*.c && cd ../build && ./test_lexer; true
-	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_parser tests/unit/test_parser.c common/*.c lexer/*.c parser/*.c && cd ../build && ./test_parser; true
-	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_types tests/unit/test_types.c common/*.c parser/*.c && cd ../build && ./test_types; true
-	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_symtab tests/unit/test_symtab.c common/*.c sema/*.c && cd ../build && ./test_symtab; true
+	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_lexer tests/unit/test_lexer.c common/*.c lexer/*.c && cd ../build && ./test_lexer
+	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_parser tests/unit/test_parser.c common/*.c lexer/*.c parser/*.c && cd ../build && ./test_parser
+	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_types tests/unit/test_types.c common/*.c parser/*.c && cd ../build && ./test_types
+	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_symtab tests/unit/test_symtab.c common/*.c sema/*.c && cd ../build && ./test_symtab
 	@echo "Unit tests complete"
 
 # Run integration tests
 test-integration: $(COMPILER) $(BUILD_DIR)
 	@echo "Running integration tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_CGEN) $(SRC_DIR)/tests/test_codegen.c -I $(SRC_DIR) -lm
-	@./$(TEST_CGEN); true
+	$(CC) $(CFLAGS) -o $(TEST_CGEN) $(SRC_DIR)/tests/test_codegen.c -I $(SRC_DIR) -lm
+	./$(TEST_CGEN)
 
 # Run regression tests
 test-regression: $(COMPILER) $(BUILD_DIR)
 	@echo "Running regression tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_FULL) $(SRC_DIR)/tests/test_full.c -I $(SRC_DIR) -lm
-	@./$(TEST_FULL); true
+	$(CC) $(CFLAGS) -o $(TEST_FULL) $(SRC_DIR)/tests/test_full.c -I $(SRC_DIR) -lm
+	./$(TEST_FULL)
 
 # Run comprehensive tests
 test-comprehensive: $(COMPILER) $(BUILD_DIR)
 	@echo "Running comprehensive tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_COMP) $(SRC_DIR)/tests/test_comprehensive.c -I $(SRC_DIR) -lm
-	@./$(TEST_COMP); true
+	$(CC) $(CFLAGS) -o $(TEST_COMP) $(SRC_DIR)/tests/test_comprehensive.c -I $(SRC_DIR) -lm
+	./$(TEST_COMP)
+
+# Add test-full as an alias for test-regression
+test-full: test-regression
 
 # Show version
 version: $(COMPILER)

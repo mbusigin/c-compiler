@@ -1,29 +1,124 @@
 // Fast C Compiler Regression Tests
+// This test harness properly handles:
+// - Compilation failures (reported as failures, not silently ignored)
+// - Timeout detection (detects infinite loops)
+// - Proper exit codes
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <errno.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
+static volatile sig_atomic_t timed_out = 0;
+
+// Timeout in seconds for running compiled programs
+#define RUN_TIMEOUT 5
+
+void timeout_handler(int sig) {
+    (void)sig;
+    timed_out = 1;
+}
+
+// Run a command with timeout, returns: 0=ok, 1=timeout, -1=error
+int run_with_timeout(const char *cmd, int timeout_sec, int *exit_code) {
+    timed_out = 0;
+    
+    struct sigaction sa;
+    sa.sa_handler = timeout_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    struct sigaction old_sa_alarm;
+    sigaction(SIGALRM, &sa, &old_sa_alarm);
+    
+    pid_t pid = fork();
+    if (pid < 0) {
+        sigaction(SIGALRM, &old_sa_alarm, NULL);
+        return -1;
+    }
+    
+    if (pid == 0) {
+        // Child process
+        sigaction(SIGALRM, &old_sa_alarm, NULL);
+        alarm(timeout_sec);
+        execl("/bin/sh", "/bin/sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    
+    // Parent process
+    int status;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            sigaction(SIGALRM, &old_sa_alarm, NULL);
+            return -1;
+        }
+    }
+    
+    alarm(0);
+    sigaction(SIGALRM, &old_sa_alarm, NULL);
+    
+    if (timed_out) {
+        // Kill any remaining child processes
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        return 1;
+    }
+    
+    if (WIFEXITED(status)) {
+        *exit_code = WEXITSTATUS(status);
+        return 0;
+    } else if (WIFSIGNALED(status)) {
+        *exit_code = 128 + WTERMSIG(status);
+        return 0;
+    }
+    
+    return -1;
+}
+
+// Run compilation (no timeout needed)
+int compile_program(const char *src_file, const char *out_file) {
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "./compiler %s -o %s 2>/dev/null", src_file, out_file);
+    return system(cmd);
+}
 
 #define TEST(name, src, expected) do { \
     tests_run++; \
     FILE *f = fopen("/tmp/cc_test.c", "w"); \
-    fprintf(f, "%s", src); \
-    fclose(f); \
-    char cmd[512]; \
-    snprintf(cmd, sizeof(cmd), "./compiler /tmp/cc_test.c -o /tmp/cc_test 2>/dev/null"); \
-    if (system(cmd) != 0) { \
-        printf("  [CE] %s\n", name); \
+    if (!f) { \
+        printf("  [ERROR] %s (could not create temp file)\n", name); \
         tests_failed++; \
     } else { \
-        int r = system("/tmp/cc_test"); \
-        int ec = WEXITSTATUS(r); \
-        if (ec == expected) { tests_passed++; printf("  [PASS] %s\n", name); } \
-        else { tests_failed++; printf("  [FAIL] %s (exp %d, got %d)\n", name, expected, ec); } \
+        fprintf(f, "%s", src); \
+        fclose(f); \
+        \
+        int compile_result = compile_program("/tmp/cc_test.c", "/tmp/cc_test"); \
+        \
+        if (compile_result != 0) { \
+            printf("  [FAIL] %s (compilation failed)\n", name); \
+            tests_failed++; \
+        } else { \
+            int exit_code = -1; \
+            int run_status = run_with_timeout("/tmp/cc_test", RUN_TIMEOUT, &exit_code); \
+            \
+            if (run_status == 1) { \
+                printf("  [FAIL] %s (TIMEOUT - infinite loop)\n", name); \
+                tests_failed++; \
+            } else if (run_status < 0) { \
+                printf("  [ERROR] %s (run error)\n", name); \
+                tests_failed++; \
+            } else if (exit_code == expected) { \
+                tests_passed++; \
+                printf("  [PASS] %s\n", name); \
+            } else { \
+                tests_failed++; \
+                printf("  [FAIL] %s (exp %d, got %d)\n", name, expected, exit_code); \
+            } \
+        } \
     } \
 } while(0)
 
