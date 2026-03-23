@@ -1,0 +1,10 @@
+# Build artifacts
+project/compiler
+project/compiler.dSYM/
+project/build/
+
+# Session files
+*.json
+*.png
+*.html
+tests/
