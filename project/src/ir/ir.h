@@ -16,7 +16,8 @@ typedef enum {
     IR_BOOL_AND, IR_BOOL_OR,  // Logical AND/OR with short-circuit support
     IR_SEXT, IR_ZEXT, IR_TRUNC, IR_SITOFP, IR_FPTOSI,
     IR_CONST_INT, IR_CONST_FLOAT, IR_CONST_STRING,
-    IR_LOAD_GLOBAL, IR_STORE_GLOBAL
+    IR_LOAD_GLOBAL, IR_STORE_GLOBAL,
+    IR_LOAD_STACK, IR_STORE_STACK
 } IROpcode;
 
 typedef enum { IR_VALUE_INT, IR_VALUE_FLOAT, IR_VALUE_PTR, IR_VALUE_STRING } IRValueKind;
@@ -27,7 +28,8 @@ typedef struct IRValue {
     int string_index;  // For string literals
     bool is_constant;  // True if this is a compile-time constant
     bool is_temp;     // True if this is a temporary (result of previous instruction)
-    int param_reg;     // For parameters: which register (x0-x3) it's in
+    int param_reg;     // For parameters: which register (x0-x3) it's in; -2 = local var
+    int offset;        // For local variables: stack offset
 } IRValue;
 
 typedef struct IRInstruction {

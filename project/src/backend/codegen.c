@@ -31,19 +31,33 @@ static void emit_instr(const char *fmt, ...) {
     va_end(args);
 }
 
-static void prologue(void) {
-    emit_instr("stp\tx29, x30, [sp, -16]!");
+static void prologue(int locals_size) {
+    // Allocate locals aligned to 16 bytes, plus 16 bytes for saved fp/lr
+    // Stack grows down: [saved fp/lr at lower addresses, locals at higher addresses]
+    // Layout: sp -> [locals...] -> [saved fp] -> [saved lr] -> (original sp)
+    // With locals_size = 8 (one 8-byte variable), we need:
+    //   8 bytes (local) + 16 bytes (fp/lr) = 24, rounded to 32
+    int total = locals_size + 16;
+    total = (total + 15) & ~15;  // Round up to 16-byte boundary
+    if (total > 0)
+        emit_instr("sub\tsp, sp, #%d", total);
+    emit_instr("stp\tx29, x30, [sp, #%d]", locals_size);  // Save fp/lr above locals
     emit_instr("mov\tx29, sp");
+    emit_instr("add\tx29, x29, #%d", locals_size);  // x29 points to fp/lr location
 }
 
-static void epilogue(void) {
-    emit_instr("ldp\tx29, x30, [sp], 16");
+static void epilogue(int locals_size) {
+    emit_instr("ldp\tx29, x30, [sp, #%d]", locals_size);
+    int total = locals_size + 16;
+    total = (total + 15) & ~15;  // Round up to 16-byte boundary
+    if (total > 0)
+        emit_instr("add\tsp, sp, #%d", total);
     emit_instr("ret");
 }
 
 static void emit_return(void) {
     emit_instr("mov\tx0, xzr");  // Default: return 0
-    epilogue();
+    epilogue(0);
 }
 
 static void emit_jmp(const char *label) {
@@ -54,10 +68,15 @@ static void emit_call(const char *name) {
     emit_instr("bl\t_%s", name);
 }
 
-// Track if x8 contains a saved value for temps
-static bool x8_has_temp = false;
+// Track if x8/x9 contain saved values for temps
+// x8_temp_type: 0 = empty, 1 = first_binary_op_arg, 2 = const
+// x9_temp_type: 0 = empty, 1 = first_binary_op_arg, 2 = const
+static int x8_temp_type = 0;
+static int x9_temp_type = 0;
+static int current_locals_size = 0;
 
 // Load an IRValue into a specific register
+// For param_reg=-2, this loads from the variable's stack slot (not just the address)
 static void emit_load_value(int reg, IRValue *val) {
     if (!val) {
         emit_instr("mov\tx%d, xzr", reg);
@@ -70,16 +89,14 @@ static void emit_load_value(int reg, IRValue *val) {
                 // It's a compile-time constant
                 emit_instr("mov\tx%d, #%lld", reg, val->data.int_val);
             } else if (val->is_temp) {
-                // It's a temporary - the value might be in x0 or x8
-                if (x8_has_temp) {
-                    // Use the saved value from x8
+                // It's a temporary - the value is in x0 or x8
+                if (x8_temp_type == 1) {
                     if (reg != 0) {
                         emit_instr("mov\tx%d, x8", reg);
-                    } else {
-                        emit_instr("mov\tx0, x8");
                     }
+                    // If reg == 0, the value is already in x0
                 } else {
-                    // Use x0 directly
+                    // Value is in x0
                     if (reg != 0) {
                         emit_instr("mov\tx%d, x0", reg);
                     }
@@ -88,6 +105,14 @@ static void emit_load_value(int reg, IRValue *val) {
             } else if (val->param_reg >= 0) {
                 // It's a parameter - load from the appropriate register
                 emit_instr("mov\tx%d, x%d", reg, val->param_reg);
+            } else if (val->param_reg == -2 || val->param_reg == -3) {
+                // It's a local variable on the stack - load from [sp, #offset]
+                // val->offset contains the stack offset
+                emit_instr("ldr\tw%d, [sp, #%d]", reg, val->offset);
+            } else if (val->param_reg == -4) {
+                // Special: indicates this is a LOAD_STACK result that needs the offset from result field
+                // This case should not normally be reached
+                emit_instr("mov\tx%d, xzr", reg);
             } else {
                 // Unknown kind, default to 0
                 emit_instr("mov\tx%d, xzr", reg);
@@ -103,22 +128,48 @@ static void emit_load_value(int reg, IRValue *val) {
     }
 }
 
-// Load operands for a binary operation, handling the case where one is a temp
+// Load operands for a binary operation
+// Strategy:
+// - IR_LOAD_STACK saves previous x8 to x10, loads new value to x0, saves to x8
+//   After first load: x10 = garbage, x8 = value, x9 = garbage
+//   After second load: x10 = first value, x8 = second value, x9 = second value
+// - IR_CONST_INT saves previous x8 to x10, loads constant to x0, saves to x9
+//   After const: x10 = previous x8, x8 = garbage (not set), x9 = constant
+// We need x0 = left, x1 = right for the operation
 static void emit_load_binary_args(IRValue *left, IRValue *right) {
-    // Check if right is a temp (references previous result in x0)
+    bool left_is_temp = left && left->kind == IR_VALUE_INT && left->is_temp;
     bool right_is_temp = right && right->kind == IR_VALUE_INT && right->is_temp;
+    bool right_is_const = right && right->kind == IR_VALUE_INT && right->is_constant;
     
-    if (right_is_temp) {
-        // Right operand is a temp (result of previous instruction in x0)
-        // We need to save it to x1 first, then load left into x0
-        emit_instr("mov\tx1, x0");  // Save temp to x1
-        emit_load_value(0, left);    // Load left into x0
-        // Now x0 = left, x1 = temp
+    if (left_is_temp && right_is_temp) {
+        // Both temps: x10 = left, x8 = right
+        emit_instr("mov\tx0, x10");   // x0 = left
+        emit_instr("mov\tx1, x8");    // x1 = right
+    } else if (left_is_temp && right_is_const) {
+        // Left in x10, right is constant in x9
+        emit_instr("mov\tx0, x10");   // x0 = left
+        emit_instr("mov\tx1, x9");    // x1 = constant
+    } else if (left_is_temp && !right_is_temp && !right_is_const) {
+        // Left in x10, right is something else (e.g., parameter)
+        emit_instr("mov\tx0, x10");   // x0 = left
+        emit_load_value(1, right);    // x1 = right
+    } else if (right_is_temp && !left_is_temp) {
+        // Right in x8, left is something else
+        emit_instr("mov\tx1, x8");    // x1 = right
+        emit_load_value(0, left);     // x0 = left
+    } else if (right_is_const && !left_is_temp) {
+        // Right is constant, left is something else
+        emit_instr("mov\tx1, x0");    // Save constant to x1
+        emit_load_value(0, left);     // x0 = left
     } else {
-        // Normal case: load left into x0, right into x1
+        // Default: load left into x0, right into x1
         emit_load_value(0, left);
         emit_load_value(1, right);
     }
+    
+    // Reset temp tracking after binary op args are prepared
+    x8_temp_type = 0;
+    x9_temp_type = 0;
 }
 
 // Generate code for an IR instruction
@@ -129,6 +180,7 @@ static void gen_instr(IRInstruction *instr) {
     
     switch (instr->opcode) {
         case IR_NOP:
+            // Marker instruction - no code emitted
             break;
             
         case IR_LABEL:
@@ -157,7 +209,7 @@ static void gen_instr(IRInstruction *instr) {
             } else {
                 emit_instr("mov\tx0, xzr");  // Return 0 if no value
             }
-            epilogue();
+            epilogue(current_locals_size);
             break;
             
         case IR_RET_VOID:
@@ -171,7 +223,7 @@ static void gen_instr(IRInstruction *instr) {
             bool is_printf = instr->label && strcmp(instr->label, "printf") == 0;
             
             // Save any existing temp value first
-            if (x8_has_temp) {
+            if (x8_temp_type == 1) {
                 emit_instr("mov\tx8, x0");  // Save return value
             }
             
@@ -218,7 +270,7 @@ static void gen_instr(IRInstruction *instr) {
             if (instr->result) {
                 instr->result->is_temp = true;
             }
-            x8_has_temp = true;
+            x8_temp_type = 1;  // x8 has the return value
             break;
         }
             
@@ -294,12 +346,17 @@ static void gen_instr(IRInstruction *instr) {
         }
             
         case IR_NOT:
-            emit_instr("mvn\tw0, w0");
+            emit_load_value(0, instr->args[0]);
+            emit_instr("cmp\tx0, xzr");
+            emit_instr("cset\tw0, eq");  // 1 if x0==0 (was false), 0 if x0!=0 (was true)
+            emit_instr("mov\tx8, x0");
             break;
             
         case IR_NEG: {
-            emit_load_binary_args(instr->args[0], NULL);
+            // Load operand into x0, then negate
+            emit_load_value(0, instr->args[0]);
             emit_instr("neg\tw0, w0");
+            emit_instr("mov\tx8, x0");
             break;
         }
             
@@ -398,19 +455,89 @@ static void gen_instr(IRInstruction *instr) {
         }
             
         case IR_LOAD:
+            // x0 contains the address; load from it
             emit_instr("ldr\tw0, [x0]");
+            emit_instr("mov\tx8, x0");
             break;
             
         case IR_STORE:
+            // x0 contains the address; store x0's value to it
             emit_instr("str\tw0, [x0]");
             break;
             
+        case IR_LOAD_STACK: {
+            // Load from [sp, #offset]
+            // Strategy: if we have a pending value in x8, save it to x10 first
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                int offset = (int)instr->result->offset;
+                emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
+                emit_instr("ldr\tw0, [sp, #%d]", offset);
+                emit_instr("mov\tx8, x0");  // Save loaded value to x8
+            }
+            x8_temp_type = 1;  // x8 now has the loaded value
+            x9_temp_type = 1;  // x9 has the previous x8 value (first operand)
+            break;
+        }
+            
+        case IR_STORE_STACK: {
+            // Store x0 to [sp, #offset] where offset is in the previous const_int
+            // We look at the previous instruction in the block to get the offset
+            // Actually, simpler: store to [sp, #offset] where offset was emitted by the previous const_int
+            // But we need to get the offset from somewhere...
+            // 
+            // Alternative approach: have IR_STORE_STACK carry the offset in its result
+            // For now, we use a hack: the previous instruction's result's data.int_val is the offset
+            // Since IR_CONST_INT is emitted right before IR_STORE_STACK with the offset value,
+            // we look at the previous instruction
+            // 
+            // This is a hack - the clean approach would be to have the store carry the offset
+            // For now, we use the convention: IR_STORE_STACK expects the offset in x8 (from the const_int)
+            // But x8 has the value to store, not the offset.
+            //
+            // NEW APPROACH: embed the offset in the IR_STORE_STACK instruction's result
+            // Lowerer already puts the offset in the result. But we need to pass it.
+            //
+            // Actually, the cleanest approach: have the previous const_int emit the offset to x9,
+            // then IR_STORE_STACK emits: str w0, [sp, x9]
+            //
+            // But IR_CONST_INT already emits x8 = value. 
+            //
+            // SIMPLEST: have IR_STORE_STACK emit: str w0, [sp, #N] where N comes from the const_int
+            // Since we don't have easy access to the previous instruction in codegen, use a different approach:
+            // Emit the constant to x9 as well (add x9, x0).
+            // But IR_CONST_INT doesn't know to emit to x9.
+            //
+            // NEW PLAN: change IR_CONST_INT to also save to x9 when followed by LOAD_STACK or STORE_STACK.
+            // But that's complex to detect.
+            //
+            // SIMPLEST EVER: just look at the previous instruction's result's data.int_val.
+            // We can access it through the IRInstruction's args array... but IR_STORE_STACK has no args.
+            //
+            // OK FINAL APPROACH: modify IR_STORE_STACK to have an offset in its result field,
+            // just like IR_LOAD_STACK. The lowerer already sets this.
+            // So IR_STORE_STACK's result->offset contains the stack offset.
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                int offset = (int)instr->result->offset;
+                emit_instr("str\tw0, [sp, #%d]", offset);
+            }
+            break;
+        }
+            
         case IR_ALLOCA:
+            // All locals are allocated in the prologue; don't emit sub sp here
             break;
             
         case IR_CONST_INT:
-            // Don't emit code here - constants are loaded on-demand by instructions that need them
-            // The result value will be used by the next instruction via emit_load_value
+            // Emit the constant load
+            // Strategy: if we have a pending value in x8, save it to x10 first
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first const)
+                emit_instr("mov\tx0, #%lld", instr->result->data.int_val);
+                emit_instr("mov\tx8, x0");   // Also save to x8
+                emit_instr("mov\tx9, x0");   // Save constant to x9
+            }
+            x8_temp_type = 1;  // x8 now has the constant
+            x9_temp_type = 2;  // x9 has the constant
             break;
             
         default:
@@ -420,6 +547,8 @@ static void gen_instr(IRInstruction *instr) {
 
 // Generate code for a basic block
 static void gen_block(IRBasicBlock *block) {
+    x8_temp_type = 0;  // Reset at start of each block
+    x9_temp_type = 0;
     for (size_t i = 0; i < list_size(block->instructions); i++) {
         gen_instr(list_get(block->instructions, i));
     }
@@ -427,6 +556,18 @@ static void gen_block(IRBasicBlock *block) {
 
 // Generate code for a function
 static void gen_function(IRFunction *func) {
+    // Calculate total locals size
+    int locals_size = 0;
+    for (size_t i = 0; i < list_size(func->blocks); i++) {
+        IRBasicBlock *block = list_get(func->blocks, i);
+        for (size_t j = 0; j < list_size(block->instructions); j++) {
+            IRInstruction *instr = list_get(block->instructions, j);
+            if (instr->opcode == IR_ALLOCA && instr->result && instr->result->is_constant) {
+                locals_size += (int)instr->result->data.int_val;
+            }
+        }
+    }
+    
     // Use underscore prefix for all functions (macOS convention)
     emit("\n\t.globl\t_%s\n", func->name);
     emit("\t.p2align\t2\n");
@@ -438,7 +579,10 @@ static void gen_function(IRFunction *func) {
         emit("\t.set\t%s, _%s\n", func->name, func->name);
     }
     
-    prologue();
+    // Round locals_size up to 16-byte boundary for alignment
+    int aligned_locals = (locals_size + 15) & ~15;
+    current_locals_size = aligned_locals;
+    prologue(aligned_locals);
     
     for (size_t i = 0; i < list_size(func->blocks); i++) {
         gen_block(list_get(func->blocks, i));
