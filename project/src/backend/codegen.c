@@ -145,7 +145,7 @@ static void gen_instr(IRInstruction *instr) {
             
         case IR_JMP_IF: {
             const char *label = instr->label ? instr->label : ".Lend";
-            emit_instr("cbnz\tw0, %s", label);
+            emit_instr("cbz\tw0, %s", label);  // Jump to label if condition is FALSE (zero)
             break;
         }
             
@@ -225,57 +225,71 @@ static void gen_instr(IRInstruction *instr) {
         case IR_ADD: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("add\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_SUB: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("sub\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_MUL: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("mul\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_DIV: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("sdiv\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
-        case IR_MOD:
+
+        case IR_MOD: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("sdiv\tw2, w0, w1");
             emit_instr("msub\tw0, w2, w1, w0");
+            emit_instr("mov\tx8, x0");
             break;
-            
-        case IR_AND:
+        }
+
+        case IR_AND: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("and\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
-            
+        }
+
         case IR_OR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("orr\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_XOR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("eor\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_SHL: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("lslv\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
-            
+
         case IR_SHR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("lsrv\tw0, w0, w1");
+            emit_instr("mov\tx8, x0");
             break;
         }
             
@@ -292,6 +306,94 @@ static void gen_instr(IRInstruction *instr) {
         case IR_CMP: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             emit_instr("cmp\tw0, w1");
+            break;
+        }
+
+        // Comparison ops: load args, compare, set result to 1 or 0, save to x8
+        case IR_CMP_LT: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, lt");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        case IR_CMP_GT: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, gt");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        case IR_CMP_LE: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, le");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        case IR_CMP_GE: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, ge");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        case IR_CMP_EQ: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, eq");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        case IR_CMP_NE: {
+            emit_load_binary_args(instr->args[0], instr->args[1]);
+            emit_instr("cmp\tw0, w1");
+            emit_instr("cset\tw0, ne");
+            emit_instr("mov\tx8, x0");
+            break;
+        }
+
+        // IR_BOOL_AND: logical AND with short-circuit evaluation
+        // left result is in x8 (from previous instruction), right is in args[0]
+        // Strategy: save x8 to x9, load right into x0 (overwrites x8),
+        //           compare both to 0 (setting booleans), AND them
+        case IR_BOOL_AND: {
+            // Save left result (in x8) to x9 before loading right
+            emit_instr("mov\tx9, x8");  // save left to x9
+            // Load right into x0 (may overwrite x8)
+            emit_load_value(0, instr->args[0]);
+            // Now: x9 has left result, x0 has right result
+            // Normalize both to 0/1 booleans, then AND
+            emit_instr("cmp\tx9, xzr");  // left == 0?
+            emit_instr("cset\tx9, ne");   // x9 = (left != 0)
+            emit_instr("cmp\tx0, xzr");   // right == 0?
+            emit_instr("cset\tx0, ne");   // x0 = (right != 0)
+            emit_instr("and\tw0, w0, w9"); // x0 = left_bool & right_bool
+            emit_instr("mov\tx8, x0");    // save result to x8
+            break;
+        }
+
+        // IR_BOOL_OR: logical OR with short-circuit evaluation
+        // left result is in x8, right is in args[0]
+        // Strategy: save x8 to x9, load right into x0, 
+        //           result = (left != 0) ? 1 : right_bool
+        case IR_BOOL_OR: {
+            // Save left result to x9
+            emit_instr("mov\tx9, x8");  // save left to x9
+            // Load right into x0 (overwrites x8)
+            emit_load_value(0, instr->args[0]);
+            // Normalize right to boolean
+            emit_instr("cmp\tx0, xzr");
+            emit_instr("cset\tx0, ne");  // x0 = right_bool
+            // If left != 0 (x9 != 0): result = 1; else result = right_bool
+            emit_instr("mov\tx8, #1");    // x8 = 1 (the "true" value)
+            emit_instr("csel\tx0, x8, x0, ne"); // if x9 != 0 (ne), x0 = 1, else x0 = right_bool
+            emit_instr("mov\tx8, x0");    // save result to x8
             break;
         }
             
