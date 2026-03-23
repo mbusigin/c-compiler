@@ -23,6 +23,31 @@ static unsigned int locals_hash_fn(const char *name);
 static IRValue *lower_expression(ASTNode *node);
 static void lower_statement(ASTNode *node);
 
+// Helper: check if an AST node contains a function call
+static bool contains_call(ASTNode *node) {
+    if (!node) return false;
+    switch (node->type) {
+        case AST_CALL_EXPR:
+            return true;
+        case AST_BINARY_EXPR:
+            return contains_call(node->data.binary.left) || contains_call(node->data.binary.right);
+        case AST_UNARY_EXPR:
+            return contains_call(node->data.unary.operand);
+        case AST_ASSIGNMENT_EXPR:
+            return contains_call(node->data.assignment.right);
+        case AST_CONDITIONAL_EXPR:
+            return contains_call(node->data.conditional.condition) ||
+                   contains_call(node->data.conditional.then_expr) ||
+                   contains_call(node->data.conditional.else_expr);
+        case AST_ARRAY_SUBSCRIPT_EXPR:
+            return contains_call(node->data.subscript.array) || contains_call(node->data.subscript.index);
+        case AST_CAST_EXPR:
+            return contains_call(node->data.cast.operand);
+        default:
+            return false;
+    }
+}
+
 // Simple locals tracking via hash table
 #define LOCALS_BUCKETS 32
 typedef struct LocalVar {
@@ -272,6 +297,38 @@ static IRValue *lower_int_literal(ASTNode *node) {
 // Lower a binary expression
 static IRValue *lower_binary_expr(ASTNode *node) {
     IRValue *left = lower_expression(node->data.binary.left);
+    
+    // If left is a temp and right contains a call, save left to stack before evaluating right
+    // This ensures the left value survives the call
+    int temp_slot = -1;
+    if (left && left->is_temp && contains_call(node->data.binary.right)) {
+        temp_slot = locals_size;
+        locals_size += 8;
+        
+        // Store the temp to stack
+        IRValue *store_result = ir_value_create(IR_VALUE_INT);
+        store_result->offset = temp_slot;
+        IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+        store_i->result = store_result;
+        add_instr(store_i);
+        
+        // Emit IR_ALLOCA for consistency
+        IRValue *size_val = ir_value_create(IR_VALUE_INT);
+        size_val->data.int_val = 8;
+        size_val->is_constant = true;
+        IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
+        alloc_instr->result = size_val;
+        add_instr(alloc_instr);
+        
+        // Create a new IRValue pointing to the stack slot
+        IRValue *saved_left = ir_value_create(IR_VALUE_INT);
+        saved_left->is_constant = false;
+        saved_left->is_temp = false;
+        saved_left->param_reg = -2;
+        saved_left->offset = temp_slot;
+        left = saved_left;
+    }
+    
     IRValue *right = lower_expression(node->data.binary.right);
 
     IROpcode opcode;
