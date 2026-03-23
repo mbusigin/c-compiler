@@ -18,6 +18,11 @@ static int param_count = 0;
 static char *param_names[16];  // Parameter names for lookup
 static int label_counter = 0;
 
+// Forward declarations
+static unsigned int locals_hash_fn(const char *name);
+static IRValue *lower_expression(ASTNode *node);
+static void lower_statement(ASTNode *node);
+
 // Simple locals tracking via hash table
 #define LOCALS_BUCKETS 32
 typedef struct LocalVar {
@@ -28,6 +33,48 @@ typedef struct LocalVar {
 static LocalVar *locals_hash[LOCALS_BUCKETS];
 static int locals_size = 0;  // Total bytes allocated on stack for locals
 
+// Scope management for variable shadowing
+#define SCOPE_STACK_DEPTH 32
+typedef struct Scope {
+    int base_locals_size;   // locals_size at scope entry
+    int num_locals;         // Number of locals added in this scope
+    const char *names[32];  // Names of locals in this scope
+} Scope;
+static Scope scope_stack[SCOPE_STACK_DEPTH];
+static int scope_depth = 0;
+
+static void scope_push(void) {
+    if (scope_depth < SCOPE_STACK_DEPTH) {
+        scope_stack[scope_depth].base_locals_size = locals_size;
+        scope_stack[scope_depth].num_locals = 0;
+        scope_depth++;
+    }
+}
+
+static void scope_pop(void) {
+    if (scope_depth > 0) {
+        scope_depth--;
+        // Remove locals declared in this scope from the hash table
+        for (int i = 0; i < scope_stack[scope_depth].num_locals; i++) {
+            const char *name = scope_stack[scope_depth].names[i];
+            if (name) {
+                unsigned int idx = locals_hash_fn(name);
+                LocalVar **prev = &locals_hash[idx];
+                while (*prev) {
+                    if (strcmp((*prev)->name, name) == 0) {
+                        LocalVar *to_free = *prev;
+                        *prev = (*prev)->next;
+                        free(to_free->name);
+                        free(to_free);
+                        break;
+                    }
+                    prev = &(*prev)->next;
+                }
+            }
+        }
+    }
+}
+
 // Loop context for break/continue
 typedef struct LoopContext {
     const char *start_label;
@@ -35,10 +82,6 @@ typedef struct LoopContext {
     struct LoopContext *next;
 } LoopContext;
 static LoopContext *loop_stack = NULL;
-
-// Forward declarations
-static IRValue *lower_expression(ASTNode *node);
-static void lower_statement(ASTNode *node);
 
 // Hash table helpers for locals
 static unsigned int locals_hash_fn(const char *name) {
@@ -65,6 +108,10 @@ static void locals_add(const char *name, int offset) {
     unsigned int idx = locals_hash_fn(name);
     lv->next = locals_hash[idx];
     locals_hash[idx] = lv;
+    // Register in current scope
+    if (scope_depth > 0 && scope_stack[scope_depth-1].num_locals < 32) {
+        scope_stack[scope_depth-1].names[scope_stack[scope_depth-1].num_locals++] = lv->name;
+    }
 }
 
 static void locals_clear(void) {
@@ -79,6 +126,7 @@ static void locals_clear(void) {
         locals_hash[i] = NULL;
     }
     locals_size = 0;
+    scope_depth = 0;
 }
 
 // Loop context helpers
@@ -300,8 +348,10 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             return operand;
         }
         case 6: {  // ++ (postfix increment)
-            // Save original value to x9 before the increment
-            IRInstruction *save_instr = ir_instr_create(IR_NOP);
+            // For post-increment: return original value, then increment.
+            // Strategy: load operand (x9 = original), save x9 to x19 (callee-saved),
+            // emit IR_CONST_INT 1, add operand+1, store result back, then restore x0=x19.
+            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X9);
             add_instr(save_instr);
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
@@ -317,10 +367,17 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             add_instr2->args[1] = one_val;
             add_instr2->num_args = 2;
             add_instr(add_instr2);
-            return add_instr2->result;
+            // Return: x0 should be original value (from x19)
+            IRInstruction *ret_instr = ir_instr_create(IR_RESTORE_X9_RESULT);
+            add_instr(ret_instr);
+            IRValue *ret_val = ir_value_create(IR_VALUE_INT);
+            ret_val->is_constant = false;
+            ret_val->is_temp = true;
+            return ret_val;
         }
         case 7: {  // -- (postfix decrement)
-            IRInstruction *save_instr = ir_instr_create(IR_NOP);
+            // For post-decrement: return original value, then decrement.
+            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X9);
             add_instr(save_instr);
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
@@ -336,7 +393,13 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             sub_instr->args[1] = one_val;
             sub_instr->num_args = 2;
             add_instr(sub_instr);
-            return sub_instr->result;
+            // Return: x0 should be original value (from x19)
+            IRInstruction *ret_instr = ir_instr_create(IR_RESTORE_X9_RESULT);
+            add_instr(ret_instr);
+            IRValue *ret_val = ir_value_create(IR_VALUE_INT);
+            ret_val->is_constant = false;
+            ret_val->is_temp = true;
+            return ret_val;
         }
         default:
             return operand;
@@ -347,6 +410,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
 static IRValue *lower_assignment_expr(ASTNode *node) {
     // Get the left-hand side (identifier)
     ASTNode *lhs = node->data.assignment.left;
+    int op = node->data.assignment.op;  // 0 = plain assignment, OP_ADD = +=, etc.
     
     if (lhs && lhs->type == AST_IDENTIFIER_EXPR) {
         // Check if it's a parameter
@@ -360,18 +424,72 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
         // Check if it's a local variable
         LocalVar *lv = locals_lookup(lhs->data.identifier.name);
         if (lv) {
+            // For compound assignment (+=, -=, etc.), load the current value first
+            IRValue *result_val = NULL;
+            if (op != 0) {
+                // Load current value of the variable
+                IRValue *load_result = ir_value_create(IR_VALUE_INT);
+                load_result->offset = lv->offset;
+                load_result->param_reg = -2;
+                IRInstruction *load_instr = ir_instr_create(IR_LOAD_STACK);
+                load_instr->result = load_result;
+                add_instr(load_instr);
+            }
+            
             // Evaluate RHS → x0 = value, x8 = value
             IRValue *rhs_val = lower_expression(node->data.assignment.right);
             UNUSED(rhs_val);
             
-            // Store value to [sp, #offset] using IR_STORE_STACK
-            IRValue *result = ir_value_create(IR_VALUE_INT);
-            result->offset = lv->offset;
+            // If compound assignment, emit the operation
+            if (op != 0) {
+                IROpcode ir_op = 0;
+                switch (op) {
+                    case OP_ADD: ir_op = IR_ADD; break;
+                    case OP_SUB: ir_op = IR_SUB; break;
+                    case OP_MUL: ir_op = IR_MUL; break;
+                    case OP_DIV: ir_op = IR_DIV; break;
+                    case OP_MOD: ir_op = IR_MOD; break;
+                    case OP_LSHIFT: ir_op = IR_SHL; break;
+                    case OP_RSHIFT: ir_op = IR_SHR; break;
+                    case OP_BITAND: ir_op = IR_AND; break;
+                    case OP_BITOR: ir_op = IR_OR; break;
+                    case OP_BITXOR: ir_op = IR_XOR; break;
+                    default: break;
+                }
+                if (ir_op != 0) {
+                    IRInstruction *op_instr = ir_instr_create(ir_op);
+                    op_instr->result = ir_value_create(IR_VALUE_INT);
+                    op_instr->result->is_constant = false;
+                    op_instr->result->is_temp = true;
+                    // After the load, x9 has the first operand (current value)
+                    // After lower_expression, x8 has the RHS value
+                    // For binary op: load_binary_args expects args[0] and args[1]
+                    // Since args are not used directly for the op, create proper args
+                    IRValue *arg0 = ir_value_create(IR_VALUE_INT);
+                    arg0->is_constant = false;
+                    arg0->is_temp = true;
+                    arg0->offset = lv->offset;
+                    arg0->param_reg = -2;
+                    op_instr->args[0] = arg0;
+                    op_instr->args[1] = rhs_val;
+                    op_instr->num_args = 2;
+                    add_instr(op_instr);
+                    result_val = op_instr->result;
+                }
+            }
+            
+            if (result_val == NULL) {
+                result_val = rhs_val;
+            }
+            
+            // Store result to [sp, #offset] using IR_STORE_STACK
+            IRValue *store_result = ir_value_create(IR_VALUE_INT);
+            store_result->offset = lv->offset;
             IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
-            store_i->result = result;
+            store_i->result = store_result;
             add_instr(store_i);
             
-            // Return the RHS value (x8 contains it)
+            // Return the result value
             IRValue *ret_val = ir_value_create(IR_VALUE_INT);
             ret_val->is_constant = false;
             ret_val->is_temp = true;
@@ -662,9 +780,11 @@ static void lower_for_stmt(ASTNode *node) {
 
 // Lower a compound statement
 static void lower_compound_stmt(ASTNode *node) {
+    scope_push();
     for (size_t i = 0; i < list_size(node->data.compound.stmts); i++) {
         lower_statement(list_get(node->data.compound.stmts, i));
     }
+    scope_pop();
 }
 
 // Lower a statement
