@@ -125,6 +125,19 @@ void type_free(Type *t);
 const char *type_kind_name(TypeKind kind);
 Type *type_pointer(Type *base);
 Type *type_array(Type *element, size_t size);
+Type *type_copy(Type *t);
+
+// Type helper functions
+Type *type_void(void);
+Type *type_char(void);
+Type *type_short(void);
+Type *type_int(void);
+Type *type_long(void);
+Type *type_longlong(void);
+Type *type_float(void);
+Type *type_double(void);
+Type *type_longdouble(void);
+Type *type_bool(void);
 
 // AST functions
 ASTNode *ast_create(ASTNodeType type);

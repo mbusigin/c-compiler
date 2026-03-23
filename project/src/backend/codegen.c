@@ -92,18 +92,9 @@ static void emit_load_value(int reg, IRValue *val) {
                 // It's a compile-time constant
                 emit_instr("mov\tx%d, #%lld", reg, val->data.int_val);
             } else if (val->is_temp) {
-                // It's a temporary - the value is in x0 or x8
-                if (x8_temp_type == 1) {
-                    if (reg != 0) {
-                        emit_instr("mov\tx%d, x8", reg);
-                    }
-                    // If reg == 0, the value is already in x0
-                } else {
-                    // Value is in x0
-                    if (reg != 0) {
-                        emit_instr("mov\tx%d, x0", reg);
-                    }
-                    // If reg == 0, the value is already in x0
+                // It's a temporary - the value is in x8 (from previous instruction)
+                if (reg != 8) {
+                    emit_instr("mov\tx%d, x8", reg);
                 }
             } else if (val->param_reg >= 0) {
                 // It's a parameter - load from the appropriate register
@@ -133,13 +124,9 @@ static void emit_load_value(int reg, IRValue *val) {
 
 // Load operands for a binary operation
 // Strategy:
-// - IR_LOAD_STACK saves previous x8 to x10 and x21, loads new value to x0, saves to x8,
-//   then restores x9 from x21 (preserving the first operand across loads)
-// - IR_CONST_INT saves previous x8 to x10 and x20, loads constant to x0, saves to x8 and x9,
-//   then restores x8 from x20 if x8 had a return value (preserving return values across const loads)
-// - After binary op args are loaded, x9_temp_type is reset to 0 UNLESS x9 has the constant (x9_temp_type == 2),
-//   in which case it's preserved for subsequent IR_CONST_INT to know x9 has the constant
-// We need x0 = left, x1 = right for the operation
+// - Previous value (first operand or temp) is saved in x10 by IR_LOAD_STACK/IR_CONST_INT
+// - Constants are loaded to x8
+// - For binary ops: x0 = left, x1 = right
 static void emit_load_binary_args(IRValue *left, IRValue *right) {
     bool left_is_temp = left && left->kind == IR_VALUE_INT && left->is_temp;
     bool right_is_temp = right && right->kind == IR_VALUE_INT && right->is_temp;
@@ -147,15 +134,15 @@ static void emit_load_binary_args(IRValue *left, IRValue *right) {
     bool left_is_const = left && left->kind == IR_VALUE_INT && left->is_constant;
     
     if (left_is_temp && right_is_temp) {
-        // Both temps: x10 = left, x8 = right
+        // Both temps: x10 = left (saved by previous instruction), x8 = right
         emit_instr("mov\tx0, x10");   // x0 = left
         emit_instr("mov\tx1, x8");    // x1 = right
     } else if (left_is_temp && right_is_const) {
-        // Left in x10 (restored from x19 if was return value), right is constant in x8
+        // Left in x10 (saved by previous instruction), right is constant in x8
         emit_instr("mov\tx0, x10");   // x0 = left
-        emit_instr("mov\tx1, x8");    // x1 = constant (in x8 after IR_CONST_INT)
+        emit_instr("mov\tx1, x8");    // x1 = constant
     } else if (left_is_temp && !right_is_temp && !right_is_const) {
-        // Left in x10, right is something else (e.g., parameter)
+        // Left in x10, right is something else (e.g., parameter or stack load)
         emit_instr("mov\tx0, x10");   // x0 = left
         emit_load_value(1, right);    // x1 = right
     } else if (right_is_temp && !left_is_temp) {
@@ -164,11 +151,11 @@ static void emit_load_binary_args(IRValue *left, IRValue *right) {
         emit_load_value(0, left);     // x0 = left
     } else if (right_is_const && !left_is_temp) {
         // Right is constant (in x8), left is something else
-        emit_instr("mov\tx1, x8");    // x1 = constant (in x8)
+        emit_instr("mov\tx1, x8");    // x1 = constant
         emit_load_value(0, left);     // x0 = left
     } else if (left_is_const && !right_is_temp) {
         // Left is constant (in x8), right is something else
-        emit_instr("mov\tx0, x8");    // x0 = constant (in x8)
+        emit_instr("mov\tx0, x8");    // x0 = constant
         emit_load_value(1, right);    // x1 = right
     } else {
         // Default: load left into x0, right into x1
@@ -177,19 +164,8 @@ static void emit_load_binary_args(IRValue *left, IRValue *right) {
     }
     
     // Reset temp tracking after binary op args are prepared
-    // x8 is always consumed in the binary op, so x8_temp_type resets to 0
-    int prev_x8_type = x8_temp_type;
     x8_temp_type = 0;
-    // x9: if x8 was consumed (prev_x8_type=0) and x9 had constant (prev_x9_type=2),
-    // then x9 now has the result (constant), so set x9_temp_type=1.
-    // Otherwise preserve x9_temp_type (reset to 0 unless x9 has constant from BEFORE the op).
-    int prev_x9_type = x9_temp_type;
     x9_temp_type = 0;
-    if (prev_x9_type == 2 && prev_x8_type == 0) {
-        x9_temp_type = 1;  // x9 has result (was constant, now result)
-    } else if (prev_x9_type == 2) {
-        x9_temp_type = 2;  // x9 has constant
-    }
 }
 
 // Generate code for an IR instruction
@@ -217,7 +193,12 @@ static void gen_instr(IRInstruction *instr) {
             
         case IR_JMP_IF: {
             const char *label = instr->label ? instr->label : ".Lend";
-            emit_instr("cbz\tw0, %s", label);  // Jump to label if condition is FALSE (zero)
+            // Load the condition value
+            if (instr->num_args > 0 && instr->args[0]) {
+                emit_load_value(0, instr->args[0]);
+            }
+            // cbz jumps if condition is FALSE (zero)
+            emit_instr("cbz\tw0, %s", label);
             break;
         }
             
@@ -508,45 +489,12 @@ static void gen_instr(IRInstruction *instr) {
         }
             
         case IR_STORE_STACK: {
-            // Store x0 to [sp, #offset] where offset is in the previous const_int
-            // We look at the previous instruction in the block to get the offset
-            // Actually, simpler: store to [sp, #offset] where offset was emitted by the previous const_int
-            // But we need to get the offset from somewhere...
-            // 
-            // Alternative approach: have IR_STORE_STACK carry the offset in its result
-            // For now, we use a hack: the previous instruction's result's data.int_val is the offset
-            // Since IR_CONST_INT is emitted right before IR_STORE_STACK with the offset value,
-            // we look at the previous instruction
-            // 
-            // This is a hack - the clean approach would be to have the store carry the offset
-            // For now, we use the convention: IR_STORE_STACK expects the offset in x8 (from the const_int)
-            // But x8 has the value to store, not the offset.
-            //
-            // NEW APPROACH: embed the offset in the IR_STORE_STACK instruction's result
-            // Lowerer already puts the offset in the result. But we need to pass it.
-            //
-            // Actually, the cleanest approach: have the previous const_int emit the offset to x9,
-            // then IR_STORE_STACK emits: str w0, [sp, x9]
-            //
-            // But IR_CONST_INT already emits x8 = value. 
-            //
-            // SIMPLEST: have IR_STORE_STACK emit: str w0, [sp, #N] where N comes from the const_int
-            // Since we don't have easy access to the previous instruction in codegen, use a different approach:
-            // Emit the constant to x9 as well (add x9, x0).
-            // But IR_CONST_INT doesn't know to emit to x9.
-            //
-            // NEW PLAN: change IR_CONST_INT to also save to x9 when followed by LOAD_STACK or STORE_STACK.
-            // But that's complex to detect.
-            //
-            // SIMPLEST EVER: just look at the previous instruction's result's data.int_val.
-            // We can access it through the IRInstruction's args array... but IR_STORE_STACK has no args.
-            //
-            // OK FINAL APPROACH: modify IR_STORE_STACK to have an offset in its result field,
-            // just like IR_LOAD_STACK. The lowerer already sets this.
-            // So IR_STORE_STACK's result->offset contains the stack offset.
+            // Store value to [sp, #offset]
+            // The value is in x8 (from the previous load or const_int)
+            // result->offset = stack offset
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
-                emit_instr("str\tw0, [sp, #%d]", offset);
+                emit_instr("str\tw8, [sp, #%d]", offset);
             }
             break;
         }
@@ -555,10 +503,22 @@ static void gen_instr(IRInstruction *instr) {
             // All locals are allocated in the prologue; don't emit sub sp here
             break;
             
+        case IR_STORE_PARAM: {
+            // Store parameter register to stack slot
+            // result->data.int_val = parameter register number (0-3 for x0-x3)
+            // result->offset = stack offset
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                int param_reg = (int)instr->result->data.int_val;
+                int offset = (int)instr->result->offset;
+                // Store parameter register to [sp, #offset]
+                emit_instr("str\tx%d, [sp, #%d]", param_reg, offset);
+            }
+            break;
+        }
+            
         case IR_CONST_INT:
             // Emit the constant load
-            // Strategy: if we have a pending value in x8 or x9, save them before loading
-            // the constant, then restore afterward.
+            // Strategy: load constant directly to x8/x9 without touching x0 (which may hold parameters)
             // x20: save area for preserving x8 (return value or first operand)
             // x19: save area for preserving x9 when it had a return value (temp_type == 1)
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
@@ -570,45 +530,23 @@ static void gen_instr(IRInstruction *instr) {
                 if (old_x9_type == 1) {
                     emit_instr("mov\tx19, x9");  // Save x9 when it had value
                 }
-                emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first const)
-                emit_instr("mov\tx0, #%lld", instr->result->data.int_val);
-                emit_instr("mov\tx8, x0");   // Save constant to x8
-                emit_instr("mov\tx9, x0");   // Save constant to x9
-                if (old_x8_type == 1 && old_x9_type == 1) {
-                    // x8 had return value AND x9 had value - restore both
-                    emit_instr("mov\tx8, x20");  // Restore return value to x8
-                    emit_instr("mov\tx9, x19");  // Restore value to x9
-                    x8_temp_type = 1;
-                    x9_temp_type = 1;
-                } else if (old_x8_type == 1 && old_x9_type == 0) {
-                    // x8 had FIRST OPERAND, x9 was garbage - DON'T restore x8, restore x9 from saved
-                    // x8 has constant, x9 has constant (restored from saved garbage - stays constant)
-                    emit_instr("mov\tx8, x20");  // Restore first operand to x8
-                    emit_instr("mov\tx9, x19");  // Restore garbage to x9
-                    x8_temp_type = 1;  // x8 has first operand
-                    x9_temp_type = 1;  // x9 has garbage (should be 2, but for simplicity keep as 1)
-                    // Note: x9_temp_type=1 here means x9 has the saved value (even if garbage).
-                    // This is slightly wrong for the case where x9 was garbage, but it's
-                    // handled by the IR_CMP handler which checks x8_temp_type.
-                } else if (old_x8_type == 2) {
-                    // x8 had first operand - restore it from x20, x9 has constant (don't restore)
-                    emit_instr("mov\tx8, x20");  // Restore first operand to x8
-                    x8_temp_type = 1;  // x8 has first operand
-                    x9_temp_type = 2;  // x9 has constant
-                } else {
-                    // x8 was garbage - x8 and x9 have constant
-                    x8_temp_type = 1;  // x8 now has the constant
-                    x9_temp_type = 2;  // x9 has the constant
-                }
+                emit_instr("mov\tx10, x8");  // Save previous x8 to x10 (for binary ops to access)
+                // Load constant directly to x8, NOT to x0 (preserve parameters)
+                emit_instr("mov\tx8, #%lld", instr->result->data.int_val);
+                emit_instr("mov\tx9, x8");   // Copy constant to x9
+                // DON'T restore x8 here - the constant should stay in x8 for the next operation
+                // The saved value in x20 can be restored later if needed by emit_load_binary_args
+                x8_temp_type = 2;  // x8 now has a constant
+                x9_temp_type = 2;  // x9 has the constant
             }
             break;
 
-        case IR_SAVE_X9:
-            // Save x9 to x21 (callee-saved) for post-increment original value
-            emit_instr("mov\tx21, x9");
+        case IR_SAVE_X8:
+            // Save x8 to x21 (callee-saved) for post-increment original value
+            emit_instr("mov\tx21, x8");
             break;
 
-        case IR_RESTORE_X9_RESULT:
+        case IR_RESTORE_X8_RESULT:
             // For post-increment: result should be original value (in x21)
             emit_instr("mov\tx0, x21");  // Return original value
             emit_instr("mov\tx8, x21");  // x8 also has original value

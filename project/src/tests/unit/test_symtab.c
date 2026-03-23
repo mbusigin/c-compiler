@@ -3,8 +3,9 @@
  */
 
 #include "../../common/test_framework.h"
+#include "../../common/util.h"
 #include "../../sema/symtab.h"
-#include "../../parser/type.h"
+#include "../../parser/ast.h"
 #include <stdio.h>
 #include <string.h>
 

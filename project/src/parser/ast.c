@@ -355,6 +355,37 @@ Type *type_array(Type *element, size_t size) {
     return t;
 }
 
+Type *type_copy(Type *t) {
+    if (!t) return NULL;
+    Type *copy = type_create(t->kind);
+    copy->size = t->size;
+    copy->align = t->align;
+    if (t->base) copy->base = type_copy(t->base);
+    copy->array_size = t->array_size;
+    if (t->return_type) copy->return_type = type_copy(t->return_type);
+    if (t->param_types && t->num_params > 0) {
+        copy->param_types = malloc(sizeof(Type *) * t->num_params);
+        for (size_t i = 0; i < t->num_params; i++) {
+            copy->param_types[i] = type_copy(t->param_types[i]);
+        }
+        copy->num_params = t->num_params;
+    }
+    copy->is_variadic = t->is_variadic;
+    return copy;
+}
+
+// Type helper functions
+Type *type_void(void) { return type_create(TYPE_VOID); }
+Type *type_char(void) { return type_create(TYPE_CHAR); }
+Type *type_short(void) { return type_create(TYPE_SHORT); }
+Type *type_int(void) { return type_create(TYPE_INT); }
+Type *type_long(void) { return type_create(TYPE_LONG); }
+Type *type_longlong(void) { return type_create(TYPE_LONGLONG); }
+Type *type_float(void) { return type_create(TYPE_FLOAT); }
+Type *type_double(void) { return type_create(TYPE_DOUBLE); }
+Type *type_longdouble(void) { return type_create(TYPE_LONGDOUBLE); }
+Type *type_bool(void) { return type_create(TYPE_BOOL); }
+
 ASTNode *translation_unit_create(void) {
     ASTNode *unit = ast_create(AST_TRANSLATION_UNIT);
     unit->data.unit.declarations = list_create();

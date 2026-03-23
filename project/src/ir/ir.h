@@ -18,8 +18,9 @@ typedef enum {
     IR_CONST_INT, IR_CONST_FLOAT, IR_CONST_STRING,
     IR_LOAD_GLOBAL, IR_STORE_GLOBAL,
     IR_LOAD_STACK, IR_STORE_STACK,
-    IR_SAVE_X9,  // Save x9 to x19 (for post-increment original value)
-    IR_RESTORE_X9_RESULT  // Restore result from x19 after post-increment
+    IR_STORE_PARAM,  // Store parameter register to stack slot
+    IR_SAVE_X8,  // Save x8 to x21 (for post-increment original value)
+    IR_RESTORE_X8_RESULT  // Restore result from x21 after post-increment
 } IROpcode;
 
 typedef enum { IR_VALUE_INT, IR_VALUE_FLOAT, IR_VALUE_PTR, IR_VALUE_STRING } IRValueKind;

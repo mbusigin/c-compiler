@@ -125,13 +125,12 @@ static bool test_operators(void) {
 static bool test_comments(void) {
     TEST_START("Test Comments");
     
-    // Single line comment
+    // Single line comment - lexer skips comments automatically, so first token is INT
     Lexer *lexer1 = lexer_create("// comment\nint");
-    lexer_next_token(lexer1); // skip comment
-    Token t2 = lexer_next_token(lexer1);
+    Token t1 = lexer_next_token(lexer1); // should return INT (comment is skipped)
     
-    if (t2.type != TOKEN_INT) {
-        printf("\n  FAILED: Single line comment not stripped\n");
+    if (t1.type != TOKEN_INT) {
+        printf("\n  FAILED: Single line comment not stripped (got token type %d, expected TOKEN_INT)\n", t1.type);
         lexer_destroy(lexer1);
         return false;
     }

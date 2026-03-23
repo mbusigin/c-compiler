@@ -78,6 +78,7 @@ static void scope_pop(void) {
 // Loop context for break/continue
 typedef struct LoopContext {
     const char *start_label;
+    const char *continue_label;  // For for-loops, this is the increment section
     const char *end_label;
     struct LoopContext *next;
 } LoopContext;
@@ -130,9 +131,10 @@ static void locals_clear(void) {
 }
 
 // Loop context helpers
-static void loop_push(const char *start, const char *end) {
+static void loop_push(const char *start, const char *cont, const char *end) {
     LoopContext *ctx = malloc(sizeof(LoopContext));
     ctx->start_label = start;
+    ctx->continue_label = cont;
     ctx->end_label = end;
     ctx->next = loop_stack;
     loop_stack = ctx;
@@ -284,12 +286,19 @@ static IRValue *lower_binary_expr(ASTNode *node) {
 
 // Lower a unary expression
 static IRValue *lower_unary_expr(ASTNode *node) {
-    IRValue *operand = lower_expression(node->data.unary.operand);
+    // For ++/--, we need to know if the operand is a variable to store back
+    ASTNode *operand_node = node->data.unary.operand;
+    bool is_var = operand_node && operand_node->type == AST_IDENTIFIER_EXPR;
+    LocalVar *lv = NULL;
+    if (is_var) {
+        lv = locals_lookup(operand_node->data.identifier.name);
+    }
+    
+    IRValue *operand = lower_expression(operand_node);
 
     switch (node->data.unary.op) {
         case 0: {  // ++x (prefix increment)
-            // operand result is in x0; x8_has_temp is set
-            // Emit constant 1 after (constant will go to x0, x8 preserved)
+            // Emit constant 1
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
@@ -297,6 +306,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             one_instr->result = one_val;
             add_instr(one_instr);
             
+            // Add 1 to operand
             IRInstruction *add_instr2 = ir_instr_create(IR_ADD);
             add_instr2->result = ir_value_create(IR_VALUE_INT);
             add_instr2->result->is_constant = false;
@@ -305,6 +315,16 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             add_instr2->args[1] = one_val;
             add_instr2->num_args = 2;
             add_instr(add_instr2);
+            
+            // Store result back to variable
+            if (lv) {
+                IRValue *store_result = ir_value_create(IR_VALUE_INT);
+                store_result->offset = lv->offset;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = store_result;
+                add_instr(store_i);
+            }
+            
             return add_instr2->result;
         }
         case 1: {  // --x (prefix decrement)
@@ -323,6 +343,16 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             sub_instr->args[1] = one_val;
             sub_instr->num_args = 2;
             add_instr(sub_instr);
+            
+            // Store result back to variable
+            if (lv) {
+                IRValue *store_result = ir_value_create(IR_VALUE_INT);
+                store_result->offset = lv->offset;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = store_result;
+                add_instr(store_i);
+            }
+            
             return sub_instr->result;
         }
         case 2: {  // ! (logical NOT)
@@ -348,17 +378,20 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             return operand;
         }
         case 6: {  // ++ (postfix increment)
-            // For post-increment: return original value, then increment.
-            // Strategy: load operand (x9 = original), save x9 to x19 (callee-saved),
-            // emit IR_CONST_INT 1, add operand+1, store result back, then restore x0=x19.
-            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X9);
+            // For post-increment: increment and store, return ORIGINAL value.
+            // Save the current x8 (which has the loaded value) to x21
+            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X8);
             add_instr(save_instr);
+            
+            // Now emit the constant 1
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
+            
+            // Add 1 to operand (x10 has original, x8 has 1)
             IRInstruction *add_instr2 = ir_instr_create(IR_ADD);
             add_instr2->result = ir_value_create(IR_VALUE_INT);
             add_instr2->result->is_constant = false;
@@ -367,24 +400,37 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             add_instr2->args[1] = one_val;
             add_instr2->num_args = 2;
             add_instr(add_instr2);
-            // Return: x0 should be original value (from x19)
-            IRInstruction *ret_instr = ir_instr_create(IR_RESTORE_X9_RESULT);
-            add_instr(ret_instr);
+            
+            // Store result back to variable
+            if (lv) {
+                IRValue *store_result = ir_value_create(IR_VALUE_INT);
+                store_result->offset = lv->offset;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = store_result;
+                add_instr(store_i);
+            }
+            
+            // Restore original value from x21
+            IRInstruction *restore_instr = ir_instr_create(IR_RESTORE_X8_RESULT);
+            add_instr(restore_instr);
+            
             IRValue *ret_val = ir_value_create(IR_VALUE_INT);
             ret_val->is_constant = false;
             ret_val->is_temp = true;
             return ret_val;
         }
         case 7: {  // -- (postfix decrement)
-            // For post-decrement: return original value, then decrement.
-            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X9);
+            // For post-decrement: decrement and store, return ORIGINAL value.
+            IRInstruction *save_instr = ir_instr_create(IR_SAVE_X8);
             add_instr(save_instr);
+            
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
+            
             IRInstruction *sub_instr = ir_instr_create(IR_SUB);
             sub_instr->result = ir_value_create(IR_VALUE_INT);
             sub_instr->result->is_constant = false;
@@ -393,9 +439,20 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             sub_instr->args[1] = one_val;
             sub_instr->num_args = 2;
             add_instr(sub_instr);
-            // Return: x0 should be original value (from x19)
-            IRInstruction *ret_instr = ir_instr_create(IR_RESTORE_X9_RESULT);
-            add_instr(ret_instr);
+            
+            // Store result back to variable
+            if (lv) {
+                IRValue *store_result = ir_value_create(IR_VALUE_INT);
+                store_result->offset = lv->offset;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = store_result;
+                add_instr(store_i);
+            }
+            
+            // Restore original value from x21
+            IRInstruction *restore_instr = ir_instr_create(IR_RESTORE_X8_RESULT);
+            add_instr(restore_instr);
+            
             IRValue *ret_val = ir_value_create(IR_VALUE_INT);
             ret_val->is_constant = false;
             ret_val->is_temp = true;
@@ -410,7 +467,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
 static IRValue *lower_assignment_expr(ASTNode *node) {
     // Get the left-hand side (identifier)
     ASTNode *lhs = node->data.assignment.left;
-    int op = node->data.assignment.op;  // 0 = plain assignment, OP_ADD = +=, etc.
+    int op = node->data.assignment.op;  // -1 = plain assignment, OP_ADD = +=, etc.
     
     if (lhs && lhs->type == AST_IDENTIFIER_EXPR) {
         // Check if it's a parameter
@@ -426,9 +483,10 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
         if (lv) {
             // For compound assignment (+=, -=, etc.), load the current value first
             IRValue *result_val = NULL;
-            if (op != 0) {
+            IRValue *load_result = NULL;
+            if (op >= 0) {  // Compound assignment (op is a valid BinaryOp)
                 // Load current value of the variable
-                IRValue *load_result = ir_value_create(IR_VALUE_INT);
+                load_result = ir_value_create(IR_VALUE_INT);
                 load_result->offset = lv->offset;
                 load_result->param_reg = -2;
                 IRInstruction *load_instr = ir_instr_create(IR_LOAD_STACK);
@@ -436,12 +494,11 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 add_instr(load_instr);
             }
             
-            // Evaluate RHS → x0 = value, x8 = value
+            // Evaluate RHS
             IRValue *rhs_val = lower_expression(node->data.assignment.right);
-            UNUSED(rhs_val);
             
             // If compound assignment, emit the operation
-            if (op != 0) {
+            if (op >= 0) {
                 IROpcode ir_op = 0;
                 switch (op) {
                     case OP_ADD: ir_op = IR_ADD; break;
@@ -461,16 +518,8 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                     op_instr->result = ir_value_create(IR_VALUE_INT);
                     op_instr->result->is_constant = false;
                     op_instr->result->is_temp = true;
-                    // After the load, x9 has the first operand (current value)
-                    // After lower_expression, x8 has the RHS value
-                    // For binary op: load_binary_args expects args[0] and args[1]
-                    // Since args are not used directly for the op, create proper args
-                    IRValue *arg0 = ir_value_create(IR_VALUE_INT);
-                    arg0->is_constant = false;
-                    arg0->is_temp = true;
-                    arg0->offset = lv->offset;
-                    arg0->param_reg = -2;
-                    op_instr->args[0] = arg0;
+                    // The load saved the current value in x8, and rhs_val is a temp
+                    op_instr->args[0] = load_result;
                     op_instr->args[1] = rhs_val;
                     op_instr->num_args = 2;
                     add_instr(op_instr);
@@ -594,6 +643,7 @@ static IRValue *lower_expression(ASTNode *node) {
 
             IRInstruction *jmp_if = ir_instr_create(IR_JMP_IF);
             jmp_if->args[0] = cond_val;
+            jmp_if->num_args = 1;
             jmp_if->label = else_label;
             add_instr(jmp_if);
 
@@ -677,6 +727,7 @@ static void lower_if_stmt(ASTNode *node) {
         IRValue *cond = lower_expression(node->data.if_stmt.condition);
         IRInstruction *instr = ir_instr_create(IR_JMP_IF);
         instr->args[0] = cond;
+        instr->num_args = 1;
         instr->label = else_label;
         add_instr(instr);
     }
@@ -707,7 +758,7 @@ static void lower_while_stmt(ASTNode *node) {
     const char *start_label = new_label();
     const char *end_label = new_label();
 
-    loop_push(start_label, end_label);
+    loop_push(start_label, NULL, end_label);  // continue goes to start for while
 
     IRInstruction *start_lbl = ir_instr_create(IR_LABEL);
     start_lbl->label = start_label;
@@ -717,6 +768,7 @@ static void lower_while_stmt(ASTNode *node) {
         IRValue *cond = lower_expression(node->data.while_stmt.condition);
         IRInstruction *instr = ir_instr_create(IR_JMP_IF);
         instr->args[0] = cond;
+        instr->num_args = 1;
         instr->label = end_label;
         add_instr(instr);
     }
@@ -739,9 +791,10 @@ static void lower_while_stmt(ASTNode *node) {
 // Lower a for statement
 static void lower_for_stmt(ASTNode *node) {
     const char *start_label = new_label();
+    const char *continue_label = new_label();  // Label for increment section
     const char *end_label = new_label();
 
-    loop_push(start_label, end_label);
+    loop_push(start_label, continue_label, end_label);
 
     if (node->data.for_stmt.init) {
         lower_statement(node->data.for_stmt.init);
@@ -755,6 +808,7 @@ static void lower_for_stmt(ASTNode *node) {
         IRValue *cond = lower_expression(node->data.for_stmt.condition);
         IRInstruction *instr = ir_instr_create(IR_JMP_IF);
         instr->args[0] = cond;
+        instr->num_args = 1;
         instr->label = end_label;
         add_instr(instr);
     }
@@ -762,6 +816,11 @@ static void lower_for_stmt(ASTNode *node) {
     if (node->data.for_stmt.body) {
         lower_statement(node->data.for_stmt.body);
     }
+
+    // Continue label - increment section
+    IRInstruction *cont_lbl = ir_instr_create(IR_LABEL);
+    cont_lbl->label = continue_label;
+    add_instr(cont_lbl);
 
     if (node->data.for_stmt.increment) {
         lower_expression(node->data.for_stmt.increment);
@@ -824,7 +883,8 @@ static void lower_statement(ASTNode *node) {
         case AST_CONTINUE_STMT: {
             if (loop_stack) {
                 IRInstruction *jmp = ir_instr_create(IR_JMP);
-                jmp->label = loop_stack->start_label;
+                // For for-loops, continue goes to increment; for while loops, to start
+                jmp->label = loop_stack->continue_label ? loop_stack->continue_label : loop_stack->start_label;
                 add_instr(jmp);
             }
             break;
@@ -852,17 +912,42 @@ static void lower_function(ASTNode *node) {
     locals_size = 0;
 
     // Handle parameters - in ARM64, first 4 integer params are in x0-x3
+    // Save them to stack slots to preserve them across function calls
     param_count = 0;
     for (size_t i = 0; i < list_size(node->data.function.params) && i < 16; i++) {
         ASTNode *param = list_get(node->data.function.params, i);
         if (param->type == AST_PARAMETER_DECL) {
+            // Allocate stack slot for this parameter
+            int param_offset = locals_size;
+            locals_size += 8;
+            locals_add(param->data.parameter.name, param_offset);
+            
+            // Create IRValue pointing to the stack slot
             IRValue *param_val = ir_value_create(IR_VALUE_INT);
             param_val->is_constant = false;
             param_val->is_temp = false;
-            param_val->param_reg = param_count;
+            param_val->param_reg = -2;  // Mark as stack-relative
+            param_val->offset = param_offset;
             param_values[param_count] = param_val;
             param_names[param_count] = xstrdup(param->data.parameter.name);
+            
+            // Emit IR_STORE_PARAM to save parameter register to stack slot
+            IRValue *store_info = ir_value_create(IR_VALUE_INT);
+            store_info->data.int_val = param_count;  // Parameter register number (x0-x3)
+            store_info->offset = param_offset;       // Stack offset
+            IRInstruction *store_param = ir_instr_create(IR_STORE_PARAM);
+            store_param->result = store_info;
+            add_instr(store_param);
+            
             param_count++;
+            
+            // Allocate stack space
+            IRValue *size_val = ir_value_create(IR_VALUE_INT);
+            size_val->data.int_val = 8;
+            size_val->is_constant = true;
+            IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
+            alloc_instr->result = size_val;
+            add_instr(alloc_instr);
         }
     }
 

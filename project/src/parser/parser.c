@@ -341,7 +341,7 @@ static ASTNode *parse_assignment_expr(Parser *p) {
     if (check(p, TOKEN_ASSIGN)) {
         advance(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
-        node->data.assignment.op = 0;
+        node->data.assignment.op = -1;  // Plain assignment (0 is OP_ADD)
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;

@@ -3,7 +3,8 @@
  */
 
 #include "../../common/test_framework.h"
-#include "../../parser/type.h"
+#include "../../common/util.h"
+#include "../../parser/ast.h"
 #include <stdio.h>
 #include <string.h>
 
