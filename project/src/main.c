@@ -3,6 +3,7 @@
  */
 
 #include "driver.h"
+#include "lexer/preproc.h"
 #include "common/util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,7 @@ int main(int argc, char **argv) {
         .dump_ir = false,
         .dump_asm = false,
         .syntax_only = false,
+        .preprocess_only = false,
         .generate_debug = false,
         .optimization_level = 0,
         .output_file = NULL,
@@ -36,8 +38,19 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Error: -o requires a filename\n");
                 return 1;
             }
+        } else if (strncmp(argv[i], "-I", 2) == 0) {
+            // Include path
+            const char *path = argv[i] + 2;
+            if (*path == '\0' && i + 1 < argc) {
+                path = argv[++i];
+            }
+            if (*path) {
+                preproc_add_include_path(path);
+            }
         } else if (strcmp(argv[i], "-c") == 0) {
             options.syntax_only = true;
+        } else if (strcmp(argv[i], "-E") == 0) {
+            options.preprocess_only = true;
         } else if (strcmp(argv[i], "-S") == 0) {
             // Just produce assembly (default behavior)
         } else if (strcmp(argv[i], "-g") == 0) {
@@ -58,6 +71,9 @@ int main(int argc, char **argv) {
             options.dump_ir = true;
         } else if (strcmp(argv[i], "--dump-asm") == 0) {
             options.dump_asm = true;
+        } else if (strcmp(argv[i], "-") == 0) {
+            // Read from stdin
+            options.input_file = NULL;  // Will trigger stdin handling
         } else if (argv[i][0] != '-') {
             options.input_file = argv[i];
         } else {
@@ -69,7 +85,7 @@ int main(int argc, char **argv) {
     
     // Need an input file unless dumping something or compiling to assembly
     if (!options.input_file && !options.dump_tokens && !options.dump_ast && 
-        !options.dump_ir && !options.dump_asm) {
+        !options.dump_ir && !options.dump_asm && !options.preprocess_only) {
         // stdin is OK, compilation will proceed
     }
     

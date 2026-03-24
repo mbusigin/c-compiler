@@ -10,6 +10,7 @@ typedef struct {
     bool dump_ir;
     bool dump_asm;
     bool syntax_only;
+    bool preprocess_only;
     bool generate_debug;
     int optimization_level;
     const char *output_file;

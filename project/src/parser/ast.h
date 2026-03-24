@@ -7,6 +7,14 @@
 // Forward declarations
 typedef struct ASTNode ASTNode;
 typedef struct Type Type;
+typedef struct StructMember StructMember;
+
+// Struct/Union member
+struct StructMember {
+    char *name;
+    Type *type;
+    size_t offset;
+};
 
 // AST node types
 typedef enum {
@@ -21,6 +29,7 @@ typedef enum {
     AST_UNION_DECL,
     AST_ENUM_DECL,
     AST_TYPEDEF_DECL,
+    AST_INITIALIZER_LIST,  // { expr1, expr2, ... }
     
     // Statements
     AST_COMPOUND_STMT,
@@ -29,6 +38,8 @@ typedef enum {
     AST_DO_WHILE_STMT,
     AST_FOR_STMT,
     AST_SWITCH_STMT,
+    AST_CASE_STMT,
+    AST_DEFAULT_STMT,
     AST_RETURN_STMT,
     AST_BREAK_STMT,
     AST_CONTINUE_STMT,
@@ -50,7 +61,8 @@ typedef enum {
     AST_FLOAT_LITERAL_EXPR,
     AST_STRING_LITERAL_EXPR,
     AST_ASSIGNMENT_EXPR,
-    AST_COMMA_EXPR
+    AST_COMMA_EXPR,
+    AST_SIZEOF_EXPR
 } ASTNodeType;
 
 // Binary operators
@@ -83,6 +95,11 @@ typedef struct Type {
     struct Type **param_types;
     size_t num_params;
     bool is_variadic;
+    // Struct/Union members
+    char *struct_name;       // Name of struct/union (can be NULL for anonymous)
+    StructMember *members;   // Array of members
+    size_t num_members;      // Number of members
+    size_t member_capacity;  // Capacity of members array
 } Type;
 
 // AST Node
@@ -100,6 +117,8 @@ struct ASTNode {
         struct { ASTNode *condition; ASTNode *body; } while_stmt;
         struct { ASTNode *init; ASTNode *condition; ASTNode *increment; ASTNode *body; } for_stmt;
         struct { ASTNode *expr; ASTNode *body; } switch_stmt;
+        struct { ASTNode *case_expr; ASTNode *stmt; } case_stmt;
+        struct { ASTNode *stmt; } default_stmt;
         struct { ASTNode *expr; } return_stmt;
         struct { char *label; } goto_stmt;
         struct { List *stmts; } compound;
@@ -117,6 +136,8 @@ struct ASTNode {
         struct { long long value; } int_literal;
         struct { double value; } float_literal;
         struct { char *value; } string_literal;
+        struct { Type *sizeof_type; ASTNode *sizeof_expr; } sizeof_expr;
+        struct { List *elements; } init_list;
     } data;
 };
 
@@ -139,6 +160,12 @@ Type *type_float(void);
 Type *type_double(void);
 Type *type_longdouble(void);
 Type *type_bool(void);
+
+// Struct member functions
+void type_add_member(Type *t, const char *name, Type *member_type);
+StructMember *type_find_member(Type *t, const char *name);
+size_t type_compute_struct_size(Type *t);
+size_t type_compute_struct_alignment(Type *t);
 
 // AST functions
 ASTNode *ast_create(ASTNodeType type);

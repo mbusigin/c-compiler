@@ -51,6 +51,7 @@ static const char *op_name(IROpcode op) {
         case IR_STORE_INDIRECT: return "store_indirect";
         case IR_LEA: return "lea";
         case IR_ADD_X21: return "add_x21";
+        case IR_ADD_IMM64: return "add_imm64";
         default: return "unknown";
     }
 }

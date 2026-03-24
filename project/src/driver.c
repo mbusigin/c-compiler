@@ -33,9 +33,20 @@ int compile_file(const char *filename, CompileOptions *options) {
     }
     
     // Preprocess
-    char *preprocessed = preprocess(source);
-    free(source);
+    free(source);  // Free the source we read, preprocess_file will re-read
+    char *preprocessed = preprocess_file(filename);
+    if (!preprocessed) {
+        error("Could not preprocess file: %s\n", filename);
+        return 1;
+    }
     source = preprocessed;
+    
+    // Preprocess-only mode: output preprocessed source and exit
+    if (options->preprocess_only) {
+        printf("%s", source);
+        free(source);
+        return 0;
+    }
     
     // Lexical analysis
     Lexer *lexer = lexer_create(source);
@@ -189,6 +200,7 @@ void show_usage(void) {
     printf("  -o <file>      Output to file\n");
     printf("  -S             Compile to assembly\n");
     printf("  -c             Compile only, do not link\n");
+    printf("  -E             Preprocess only\n");
     printf("  -O<0-3>        Set optimization level\n");
     printf("  --dump-tokens  Print tokens\n");
     printf("  --dump-ast     Print AST\n");

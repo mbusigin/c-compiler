@@ -25,7 +25,8 @@ typedef enum {
     IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
     IR_STORE_INDIRECT, // Store w8 to [x21] (address in x21, value in x8)
     IR_LEA,           // Load effective address: x8 = sp + offset
-    IR_ADD_X21        // x8 = x21 + x8 (add saved address to offset)
+    IR_ADD_X21,       // x8 = x21 + x8 (add saved address to offset)
+    IR_ADD_IMM64      // x8 = x8 + imm (64-bit add for pointer arithmetic)
 } IROpcode;
 
 typedef enum { IR_VALUE_INT, IR_VALUE_FLOAT, IR_VALUE_PTR, IR_VALUE_STRING } IRValueKind;

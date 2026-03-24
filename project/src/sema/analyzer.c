@@ -15,13 +15,46 @@ static void analyze_node(ASTNode *node);
 static void analyze_expression(ASTNode *node);
 static Type *analyze_expression_with_type(ASTNode *node);
 
+// Check if a type is an integer type
+static bool is_integer_type(Type *t) {
+    if (!t) return false;
+    switch (t->kind) {
+        case TYPE_CHAR:
+        case TYPE_SHORT:
+        case TYPE_INT:
+        case TYPE_LONG:
+        case TYPE_LONGLONG:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Check if two types are compatible
 static bool types_compatible(Type *t1, Type *t2) {
     if (!t1 || !t2) return true;
+    
+    // Allow implicit conversions between integer types
+    if (is_integer_type(t1) && is_integer_type(t2)) {
+        return true;
+    }
+    
+    // Allow implicit pointer conversions (void* to any pointer, any pointer to void*)
+    if (t1->kind == TYPE_POINTER && t2->kind == TYPE_POINTER) {
+        // Allow any pointer to be assigned to void* and vice versa
+        if (t1->base && t1->base->kind == TYPE_VOID) return true;
+        if (t2->base && t2->base->kind == TYPE_VOID) return true;
+        // Otherwise check base types
+        if (t1->base && t2->base) {
+            return types_compatible(t1->base, t2->base);
+        }
+        return true;
+    }
+    
     if (t1->kind != t2->kind) return false;
     
-    // Check base types for pointers and arrays
-    if ((t1->kind == TYPE_POINTER || t1->kind == TYPE_ARRAY) && t1->base && t2->base) {
+    // Check base types for arrays
+    if (t1->kind == TYPE_ARRAY && t1->base && t2->base) {
         return types_compatible(t1->base, t2->base);
     }
     
@@ -204,6 +237,8 @@ static Type *analyze_expression_with_type(ASTNode *node) {
                 return NULL;
             }
             sym->is_used = true;
+            // Store type info on node
+            node->type_info = sym->type;
             return sym->type;
         }
         
@@ -241,8 +276,10 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             Type *right = analyze_expression_with_type(node->data.assignment.right);
             
             if (left && right && !types_compatible(left, right)) {
-                error("[%d:%d] assignment of incompatible types\n",
-                      node->line, node->column);
+                const char *left_name = type_kind_name(left->kind);
+                const char *right_name = type_kind_name(right->kind);
+                error("[%d:%d] assignment of incompatible types (%s vs %s)\n",
+                      node->line, node->column, left_name, right_name);
             }
             return left;
         }
@@ -286,9 +323,39 @@ static Type *analyze_expression_with_type(ASTNode *node) {
         }
         
         case AST_MEMBER_ACCESS_EXPR:
-        case AST_POINTER_MEMBER_ACCESS_EXPR:
-            // TODO: Struct member access
-            return NULL;
+        case AST_POINTER_MEMBER_ACCESS_EXPR: {
+            // Struct member access
+            ASTNode *base = node->data.member.expr;
+            const char *member_name = node->data.member.member;
+            
+            if (!base || !member_name) return NULL;
+            
+            // Analyze base expression to get its type
+            Type *base_type = analyze_expression_with_type(base);
+            
+            // For arrow (->), we need to dereference pointer type
+            if (node->type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+                if (base_type && base_type->kind == TYPE_POINTER) {
+                    base_type = base_type->base;
+                }
+            }
+            
+            if (!base_type) return NULL;
+            if (base_type->kind != TYPE_STRUCT && base_type->kind != TYPE_UNION) return NULL;
+            
+            // Find the member
+            StructMember *member = type_find_member(base_type, member_name);
+            if (!member) {
+                error("[%d:%d] struct has no member named '%s'\n",
+                      node->line, node->column, member_name);
+                return NULL;
+            }
+            
+            // Store the type info on the node for IR lowering
+            node->type_info = member->type;
+            
+            return member->type;
+        }
             
         case AST_CAST_EXPR:
             if (node->data.cast.cast_type) {
@@ -322,6 +389,17 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             if (node->data.comma.right) {
                 result = analyze_expression_with_type(node->data.comma.right);
             }
+            return result;
+        }
+        
+        case AST_SIZEOF_EXPR: {
+            // sizeof returns size_t (unsigned long)
+            if (node->data.sizeof_expr.sizeof_expr) {
+                analyze_expression(node->data.sizeof_expr.sizeof_expr);
+            }
+            // Return unsigned long type
+            Type *result = type_create(TYPE_LONG);
+            result->is_unsigned = true;
             return result;
         }
         

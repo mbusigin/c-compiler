@@ -383,8 +383,15 @@ Token lexer_next_token(Lexer *lexer) {
         case '?': { Token t = make_token(lexer, TOKEN_QUESTION); advance(lexer); t.length = 1; return t; }
         case ':': { Token t = make_token(lexer, TOKEN_COLON); advance(lexer); t.length = 1; return t; }
         case '.': {
+            // Check for ellipsis (...)
+            if (peek(lexer) == '.' && peek_next(lexer) == '.') {
+                advance(lexer); advance(lexer); advance(lexer);
+                Token t = make_token(lexer, TOKEN_ELLIPSIS);
+                t.length = 3;
+                return t;
+            }
             // Check if it's a float literal (e.g., .25)
-            if (isdigit(peek_next(lexer))) {
+            if (isdigit(peek(lexer))) {
                 // It's a float starting with decimal point, use scan_number
                 return scan_number(lexer);
             }
@@ -544,6 +551,7 @@ TokenType keyword_lookup(const char *str, int length) {
         TokenType type;
     } keywords[] = {
         {"auto", TOKEN_AUTO},
+        {"_Bool", TOKEN_BOOL},
         {"break", TOKEN_BREAK},
         {"case", TOKEN_CASE},
         {"char", TOKEN_CHAR},

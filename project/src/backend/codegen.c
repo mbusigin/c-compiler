@@ -632,6 +632,19 @@ static void gen_instr(IRInstruction *instr) {
             x9_temp_type = 1;
             break;
             
+        case IR_ADD_IMM64:
+            // x8 = x8 + imm (64-bit add for pointer arithmetic)
+            // args[1] contains the immediate offset
+            if (instr->num_args >= 2 && instr->args[1] && instr->args[1]->is_constant) {
+                long long offset = instr->args[1]->data.int_val;
+                if (offset > 0) {
+                    emit_instr("add\tx8, x8, #%lld", offset);
+                }
+            }
+            x8_temp_type = 1;
+            x9_temp_type = 1;
+            break;
+            
         default:
             break;
     }

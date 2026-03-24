@@ -3,6 +3,7 @@
  */
 
 #include "lowerer.h"
+#include "../parser/ast.h"
 #include "../common/util.h"
 #include "../sema/symtab.h"
 #include <stdlib.h>
@@ -43,6 +44,9 @@ static bool contains_call(ASTNode *node) {
             return contains_call(node->data.subscript.array) || contains_call(node->data.subscript.index);
         case AST_CAST_EXPR:
             return contains_call(node->data.cast.operand);
+        case AST_MEMBER_ACCESS_EXPR:
+        case AST_POINTER_MEMBER_ACCESS_EXPR:
+            return contains_call(node->data.member.expr);
         default:
             return false;
     }
@@ -886,6 +890,56 @@ static IRValue *lower_expression(ASTNode *node) {
         case AST_STRING_LITERAL_EXPR:
             return lower_string_literal(node);
 
+        case AST_SIZEOF_EXPR: {
+            // sizeof(type) or sizeof(expr) - returns size in bytes
+            size_t size = 8;  // Default size for pointers
+            
+            if (node->data.sizeof_expr.sizeof_type) {
+                Type *t = node->data.sizeof_expr.sizeof_type;
+                switch (t->kind) {
+                    case TYPE_VOID: size = 1; break;
+                    case TYPE_CHAR: size = 1; break;
+                    case TYPE_SHORT: size = 2; break;
+                    case TYPE_INT: size = 4; break;
+                    case TYPE_LONG: 
+                    case TYPE_LONGLONG: size = 8; break;
+                    case TYPE_FLOAT: size = 4; break;
+                    case TYPE_DOUBLE: 
+                    case TYPE_LONGDOUBLE: size = 8; break;
+                    case TYPE_POINTER: size = 8; break;
+                    case TYPE_ARRAY: 
+                        // Array size = element size * count
+                        if (t->base) {
+                            size_t elem_size = 4;  // Default int
+                            if (t->base->kind == TYPE_CHAR) elem_size = 1;
+                            else if (t->base->kind == TYPE_SHORT) elem_size = 2;
+                            else if (t->base->kind == TYPE_INT) elem_size = 4;
+                            else if (t->base->kind == TYPE_LONG) elem_size = 8;
+                            else if (t->base->kind == TYPE_FLOAT) elem_size = 4;
+                            else if (t->base->kind == TYPE_DOUBLE) elem_size = 8;
+                            else if (t->base->kind == TYPE_POINTER) elem_size = 8;
+                            size = elem_size * t->array_size;
+                        }
+                        break;
+                    default: size = 8; break;
+                }
+            } else if (node->data.sizeof_expr.sizeof_expr) {
+                // For sizeof(expr), we need the type of the expression
+                // For simplicity, use default size
+                // TODO: Get actual type from semantic analysis
+                size = 4;  // Default to int size
+            }
+            
+            // Return the size as a constant integer
+            IRValue *result = ir_value_create(IR_VALUE_INT);
+            result->data.int_val = size;
+            result->is_constant = true;
+            IRInstruction *const_instr = ir_instr_create(IR_CONST_INT);
+            const_instr->result = result;
+            add_instr(const_instr);
+            return result;
+        }
+
         case AST_CAST_EXPR:
             // For now, just evaluate the operand (no type conversion)
             return lower_expression(node->data.cast.operand);
@@ -1057,6 +1111,106 @@ static IRValue *lower_expression(ASTNode *node) {
             return result;
         }
 
+        case AST_MEMBER_ACCESS_EXPR: {
+            // struct_var.member - compute address and load
+            ASTNode *base = node->data.member.expr;
+            const char *member_name = node->data.member.member;
+            
+            // Get member offset from type info
+            size_t member_offset = 0;
+            Type *struct_type = NULL;
+            
+            if (base && base->type_info) {
+                struct_type = base->type_info;
+                if (struct_type) {
+                    StructMember *member = type_find_member(struct_type, member_name);
+                    if (member) {
+                        member_offset = member->offset;
+                    }
+                }
+            }
+            
+            // For a local struct variable, compute its address
+            if (base && base->type == AST_IDENTIFIER_EXPR) {
+                const char *name = base->data.identifier.name;
+                LocalVar *lv = locals_lookup(name);
+                if (lv) {
+                    // Get struct address (sp + offset + member_offset)
+                    IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                    addr_val->offset = lv->offset + member_offset;
+                    addr_val->is_constant = false;
+                    addr_val->is_temp = true;
+                    IRInstruction *addr_instr = ir_instr_create(IR_LEA);
+                    addr_instr->result = addr_val;
+                    add_instr(addr_instr);
+                    
+                    // Load from struct address
+                    IRInstruction *load_instr = ir_instr_create(IR_LOAD);
+                    load_instr->result = ir_value_create(IR_VALUE_INT);
+                    load_instr->result->is_temp = true;
+                    load_instr->num_args = 0;
+                    add_instr(load_instr);
+                    
+                    return load_instr->result;
+                }
+            }
+            
+            // Fallback - evaluate base expression
+            return lower_expression(base);
+        }
+
+        case AST_POINTER_MEMBER_ACCESS_EXPR: {
+            // ptr->member - dereference pointer and access member
+            ASTNode *base = node->data.member.expr;
+            const char *member_name = node->data.member.member;
+            
+            // Get member offset from type info
+            size_t member_offset = 0;
+            Type *ptr_type = base ? base->type_info : NULL;
+            Type *struct_type = NULL;
+            
+            if (ptr_type && ptr_type->kind == TYPE_POINTER) {
+                struct_type = ptr_type->base;
+                if (struct_type) {
+                    StructMember *member = type_find_member(struct_type, member_name);
+                    if (member) {
+                        member_offset = member->offset;
+                    }
+                }
+            }
+            
+            // Evaluate the pointer expression
+            IRValue *base_val = lower_expression(base);
+            (void)base_val;  // The pointer value is now in x8
+            
+            // Add member offset to pointer using 64-bit add
+            if (member_offset > 0) {
+                // Create a constant for the offset
+                IRValue *offset_val = ir_value_create(IR_VALUE_INT);
+                offset_val->is_constant = true;
+                offset_val->data.int_val = (long long)member_offset;
+                
+                // Use 64-bit add for pointer arithmetic
+                IRInstruction *offset_add = ir_instr_create(IR_ADD_IMM64);
+                offset_add->result = ir_value_create(IR_VALUE_INT);
+                offset_add->result->is_temp = true;
+                offset_add->result->is_address = true;  // Mark as 64-bit address
+                offset_add->args[0] = base_val;
+                offset_add->args[1] = offset_val;
+                offset_add->num_args = 2;
+                add_instr(offset_add);
+            }
+            
+            // Load from that address (in x8)
+            IRInstruction *load_instr = ir_instr_create(IR_LOAD);
+            load_instr->result = ir_value_create(IR_VALUE_INT);
+            load_instr->result->is_temp = true;
+            load_instr->num_args = 0;
+            add_instr(load_instr);
+            
+            return load_instr->result;
+        }
+
         default:
             return ir_value_create(IR_VALUE_INT);
     }
@@ -1217,6 +1371,33 @@ static void lower_for_stmt(ASTNode *node) {
     loop_pop();
 }
 
+// Lower a switch statement (simple implementation using if-else chain)
+static void lower_switch_stmt(ASTNode *node) {
+    // For a simple implementation, we handle case/default by converting to if-else
+    
+    const char *end_label = new_label();
+    
+    // Push the switch end label for break statements
+    loop_push(NULL, NULL, end_label);
+    
+    // Evaluate the switch expression
+    if (node->data.switch_stmt.expr) {
+        (void)lower_expression(node->data.switch_stmt.expr);
+    }
+    
+    // Lower the body (case labels will be handled by lower_statement)
+    if (node->data.switch_stmt.body) {
+        lower_statement(node->data.switch_stmt.body);
+    }
+    
+    // End label
+    IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
+    end_lbl->label = end_label;
+    add_instr(end_lbl);
+    
+    loop_pop();
+}
+
 // Lower a compound statement
 static void lower_compound_stmt(ASTNode *node) {
     scope_push();
@@ -1249,6 +1430,9 @@ static void lower_statement(ASTNode *node) {
         case AST_FOR_STMT:
             lower_for_stmt(node);
             break;
+        case AST_SWITCH_STMT:
+            lower_switch_stmt(node);
+            break;
         case AST_VARIABLE_DECL:
             lower_variable_decl(node);
             break;
@@ -1266,6 +1450,21 @@ static void lower_statement(ASTNode *node) {
                 // For for-loops, continue goes to increment; for while loops, to start
                 jmp->label = loop_stack->continue_label ? loop_stack->continue_label : loop_stack->start_label;
                 add_instr(jmp);
+            }
+            break;
+        }
+        case AST_CASE_STMT: {
+            // For now, just lower the statement inside the case
+            // A proper implementation would emit a label and conditional jump
+            if (node->data.case_stmt.stmt) {
+                lower_statement(node->data.case_stmt.stmt);
+            }
+            break;
+        }
+        case AST_DEFAULT_STMT: {
+            // For now, just lower the statement inside the default
+            if (node->data.default_stmt.stmt) {
+                lower_statement(node->data.default_stmt.stmt);
             }
             break;
         }

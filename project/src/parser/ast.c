@@ -16,6 +16,8 @@ const char *ast_node_name(ASTNodeType type) {
         case AST_DO_WHILE_STMT: return "DoWhileStmt";
         case AST_FOR_STMT: return "ForStmt";
         case AST_SWITCH_STMT: return "SwitchStmt";
+        case AST_CASE_STMT: return "CaseStmt";
+        case AST_DEFAULT_STMT: return "DefaultStmt";
         case AST_RETURN_STMT: return "ReturnStmt";
         case AST_BREAK_STMT: return "BreakStmt";
         case AST_CONTINUE_STMT: return "ContinueStmt";
@@ -36,6 +38,10 @@ const char *ast_node_name(ASTNodeType type) {
         case AST_STRING_LITERAL_EXPR: return "StringLiteral";
         case AST_ASSIGNMENT_EXPR: return "Assignment";
         case AST_COMMA_EXPR: return "CommaExpr";
+        case AST_SIZEOF_EXPR: return "SizeofExpr";
+        case AST_TYPEDEF_DECL: return "TypedefDecl";
+        case AST_ENUM_DECL: return "EnumDecl";
+        case AST_INITIALIZER_LIST: return "InitializerList";
         default: return "Unknown";
     }
 }
@@ -159,11 +165,16 @@ void ast_free(ASTNode *node) {
         case AST_STRING_LITERAL_EXPR:
             free(node->data.string_literal.value);
             break;
+        case AST_SIZEOF_EXPR:
+            if (node->data.sizeof_expr.sizeof_type) type_free(node->data.sizeof_expr.sizeof_type);
+            if (node->data.sizeof_expr.sizeof_expr) ast_free(node->data.sizeof_expr.sizeof_expr);
+            break;
         default:
             break;
     }
     
-    if (node->type_info) type_free(node->type_info);
+    // Note: Don't free type_info - it's a borrowed reference to types owned elsewhere
+    // (either in symbol table or in declarations)
     free(node);
 }
 
@@ -275,6 +286,19 @@ static void print_ast_recursive(const ASTNode *node, int indent) {
         case AST_MEMBER_ACCESS_EXPR:
         case AST_POINTER_MEMBER_ACCESS_EXPR:
             print_ast_recursive(node->data.member.expr, indent + 1);
+            // Print member name on same line with indent
+            for (int i = 0; i <= indent; i++) printf("  ");
+            printf("member='%s'\n", node->data.member.member ? node->data.member.member : "?");
+            break;
+        case AST_VARIABLE_DECL:
+            if (node->data.variable.init)
+                print_ast_recursive(node->data.variable.init, indent + 1);
+            break;
+        case AST_INITIALIZER_LIST:
+            if (node->data.init_list.elements) {
+                for (size_t i = 0; i < list_size(node->data.init_list.elements); i++)
+                    print_ast_recursive(list_get(node->data.init_list.elements, i), indent + 1);
+            }
             break;
         default:
             break;
@@ -337,6 +361,15 @@ void type_free(Type *t) {
         free(t->param_types);
     }
     if (t->return_type) type_free(t->return_type);
+    // Free struct members - but NOT their types (they might be shared)
+    if (t->members) {
+        for (size_t i = 0; i < t->num_members; i++) {
+            free(t->members[i].name);
+            // Don't free t->members[i].type - it might be shared
+        }
+        free(t->members);
+    }
+    free(t->struct_name);
     free(t);
 }
 
@@ -360,6 +393,7 @@ Type *type_copy(Type *t) {
     Type *copy = type_create(t->kind);
     copy->size = t->size;
     copy->align = t->align;
+    copy->is_unsigned = t->is_unsigned;
     if (t->base) copy->base = type_copy(t->base);
     copy->array_size = t->array_size;
     if (t->return_type) copy->return_type = type_copy(t->return_type);
@@ -371,6 +405,18 @@ Type *type_copy(Type *t) {
         copy->num_params = t->num_params;
     }
     copy->is_variadic = t->is_variadic;
+    // Copy struct info (shallow - members point to same types)
+    if (t->struct_name) copy->struct_name = strdup(t->struct_name);
+    if (t->members && t->num_members > 0) {
+        copy->member_capacity = t->member_capacity;
+        copy->members = malloc(sizeof(StructMember) * copy->member_capacity);
+        for (size_t i = 0; i < t->num_members; i++) {
+            copy->members[i].name = strdup(t->members[i].name);
+            copy->members[i].type = t->members[i].type;  // Shallow copy
+            copy->members[i].offset = t->members[i].offset;
+        }
+        copy->num_members = t->num_members;
+    }
     return copy;
 }
 
@@ -385,6 +431,116 @@ Type *type_float(void) { return type_create(TYPE_FLOAT); }
 Type *type_double(void) { return type_create(TYPE_DOUBLE); }
 Type *type_longdouble(void) { return type_create(TYPE_LONGDOUBLE); }
 Type *type_bool(void) { return type_create(TYPE_BOOL); }
+
+// Struct member functions
+void type_add_member(Type *t, const char *name, Type *member_type) {
+    if (!t || !name || !member_type) return;
+    if (t->kind != TYPE_STRUCT && t->kind != TYPE_UNION) return;
+    
+    // Grow the members array if needed
+    if (t->num_members >= t->member_capacity) {
+        size_t new_capacity = t->member_capacity == 0 ? 8 : t->member_capacity * 2;
+        StructMember *new_members = realloc(t->members, sizeof(StructMember) * new_capacity);
+        if (!new_members) return;
+        t->members = new_members;
+        t->member_capacity = new_capacity;
+    }
+    
+    // Compute member offset
+    size_t offset = 0;
+    if (t->kind == TYPE_STRUCT) {
+        // For structs, align each member and accumulate offsets
+        size_t current_size = 0;
+        for (size_t i = 0; i < t->num_members; i++) {
+            size_t member_end = t->members[i].offset + t->members[i].type->size;
+            if (member_end > current_size) current_size = member_end;
+        }
+        // Align to member's alignment
+        size_t misalign = current_size % member_type->align;
+        if (misalign != 0) {
+            current_size += member_type->align - misalign;
+        }
+        offset = current_size;
+    }
+    // For unions, offset is always 0
+    
+    // Add the member
+    t->members[t->num_members].name = strdup(name);
+    t->members[t->num_members].type = member_type;
+    t->members[t->num_members].offset = offset;
+    t->num_members++;
+    
+    // Update struct size and alignment
+    if (t->kind == TYPE_STRUCT) {
+        size_t end = offset + member_type->size;
+        if (end > t->size) t->size = end;
+    } else {
+        // Union: size is max of all members
+        if (member_type->size > t->size) t->size = member_type->size;
+    }
+    if (member_type->align > t->align) t->align = member_type->align;
+}
+
+StructMember *type_find_member(Type *t, const char *name) {
+    if (!t || !name) return NULL;
+    if (t->kind != TYPE_STRUCT && t->kind != TYPE_UNION) return NULL;
+    
+    for (size_t i = 0; i < t->num_members; i++) {
+        if (strcmp(t->members[i].name, name) == 0) {
+            return &t->members[i];
+        }
+    }
+    return NULL;
+}
+
+size_t type_compute_struct_size(Type *t) {
+    if (!t) return 0;
+    if (t->kind != TYPE_STRUCT && t->kind != TYPE_UNION) return t->size;
+    
+    if (t->num_members == 0) return 0;
+    
+    if (t->kind == TYPE_STRUCT) {
+        // Size is the offset of the last member plus its size, rounded up to alignment
+        size_t last_end = 0;
+        for (size_t i = 0; i < t->num_members; i++) {
+            size_t member_end = t->members[i].offset + t->members[i].type->size;
+            if (member_end > last_end) last_end = member_end;
+        }
+        // Round up to alignment
+        size_t misalign = last_end % t->align;
+        if (misalign != 0) {
+            last_end += t->align - misalign;
+        }
+        return last_end;
+    } else {
+        // Union: size is max of all members
+        size_t max_size = 0;
+        for (size_t i = 0; i < t->num_members; i++) {
+            if (t->members[i].type->size > max_size) {
+                max_size = t->members[i].type->size;
+            }
+        }
+        // Round up to alignment
+        size_t misalign = max_size % t->align;
+        if (misalign != 0) {
+            max_size += t->align - misalign;
+        }
+        return max_size;
+    }
+}
+
+size_t type_compute_struct_alignment(Type *t) {
+    if (!t) return 1;
+    if (t->kind != TYPE_STRUCT && t->kind != TYPE_UNION) return t->align;
+    
+    size_t max_align = 1;
+    for (size_t i = 0; i < t->num_members; i++) {
+        if (t->members[i].type->align > max_align) {
+            max_align = t->members[i].type->align;
+        }
+    }
+    return max_align;
+}
 
 ASTNode *translation_unit_create(void) {
     ASTNode *unit = ast_create(AST_TRANSLATION_UNIT);
