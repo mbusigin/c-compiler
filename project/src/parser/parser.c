@@ -692,11 +692,105 @@ static Type *parse_type(Parser *p) {
 // Function parameter parsing
 static ASTNode *parse_parameter(Parser *p) {
     Type *param_type = parse_type(p);
+    char *param_name = NULL;
+    
+    // Check for function pointer parameter: Type (*name)(params)
+    if (check(p, TOKEN_LPAREN)) {
+        advance(p);  // consume '('
+        if (check(p, TOKEN_STAR)) {
+            // This is a function pointer: Type (*name)(params)
+            advance(p);  // consume '*'
+            if (check(p, TOKEN_IDENTIFIER)) {
+                param_name = token_name(p);
+                advance(p);  // consume name
+            }
+            if (check(p, TOKEN_RPAREN)) {
+                advance(p);  // consume ')'
+            }
+            
+            // Create function pointer type
+            Type *func_type = type_create(TYPE_FUNCTION);
+            func_type->return_type = param_type;  // The parsed type is the return type
+            func_type->param_types = NULL;
+            func_type->num_params = 0;
+            func_type->is_variadic = false;
+            
+            // Parse parameter list: (param1, param2, ...)
+            if (check(p, TOKEN_LPAREN)) {
+                advance(p);  // consume '('
+                
+                // Parse parameters
+                Type **params = NULL;
+                size_t num_params = 0;
+                size_t param_capacity = 0;
+                
+                while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+                    Type *p_type = parse_type(p);
+                    if (!p_type) {
+                        p_type = type_create(TYPE_INT);
+                    }
+                    
+                    // Skip pointer modifiers
+                    while (check(p, TOKEN_STAR)) {
+                        advance(p);
+                        Type *ptr = type_pointer(p_type);
+                        p_type = ptr;
+                    }
+                    
+                    // Skip parameter name if present
+                    if (check(p, TOKEN_IDENTIFIER)) {
+                        advance(p);
+                    }
+                    
+                    // Skip array brackets if present
+                    while (check(p, TOKEN_LBRACKET)) {
+                        advance(p);
+                        while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) advance(p);
+                        if (check(p, TOKEN_RBRACKET)) advance(p);
+                        Type *ptr = type_pointer(p_type);
+                        p_type = ptr;
+                    }
+                    
+                    // Add to parameter list
+                    if (num_params >= param_capacity) {
+                        param_capacity = param_capacity ? param_capacity * 2 : 4;
+                        params = realloc(params, sizeof(Type*) * param_capacity);
+                    }
+                    params[num_params++] = p_type;
+                    
+                    // Skip comma
+                    if (check(p, TOKEN_COMMA)) {
+                        advance(p);
+                    }
+                }
+                
+                if (check(p, TOKEN_RPAREN)) {
+                    advance(p);  // consume ')'
+                }
+                
+                func_type->param_types = params;
+                func_type->num_params = num_params;
+            }
+            
+            param_type = func_type;
+        } else {
+            // Just a parenthesized name, put it back
+            // Unconsume the '(' - we can't actually do this, so skip to matching ')'
+            int depth = 1;
+            while (depth > 0 && !check(p, TOKEN_EOF)) {
+                if (check(p, TOKEN_LPAREN)) depth++;
+                else if (check(p, TOKEN_RPAREN)) depth--;
+                advance(p);
+            }
+        }
+    }
     
     ASTNode *param = ast_create(AST_PARAMETER_DECL);
     param->data.parameter.param_type = param_type;
     
-    if (check(p, TOKEN_IDENTIFIER)) {
+    if (param_name) {
+        param->data.parameter.name = param_name;
+    } else if (check(p, TOKEN_IDENTIFIER)) {
         param->data.parameter.name = token_name(p);
         advance(p);
     } else {

@@ -9,6 +9,8 @@
 
 static SymbolTable *current_symtab = NULL;
 static ASTNode *current_function = NULL;
+static int recursion_depth = 0;
+static const int MAX_RECURSION = 200;
 
 // Forward declarations
 static void analyze_node(ASTNode *node);
@@ -411,6 +413,10 @@ static Type *analyze_expression_with_type(ASTNode *node) {
 // Analyze a node
 static void analyze_node(ASTNode *node) {
     if (!node) return;
+    if (++recursion_depth > MAX_RECURSION) {
+        recursion_depth--;
+        return;
+    }
     
     switch (node->type) {
         case AST_FUNCTION_DECL:
@@ -442,6 +448,7 @@ static void analyze_node(ASTNode *node) {
             analyze_expression(node);
             break;
     }
+    recursion_depth--;
 }
 
 // Analyze a translation unit (list of declarations)
