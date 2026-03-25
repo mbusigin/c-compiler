@@ -15,6 +15,7 @@
 #include "backend/codegen.h"
 #include "backend/asm.h"
 #include "backend/dwarf.h"
+#include "backend/wasm_codegen.h"
 #include "common/util.h"
 #include "common/error.h"
 #include <stdio.h>
@@ -107,57 +108,13 @@ int compile_file(const char *filename, CompileOptions *options) {
     // Optimization (placeholder)
     // module = optimizer_optimize(module, (OptLevel)options->optimization_level);
     
-    // Code generation
-    char *asm_file = NULL;
-    if (options->output_file) {
-        // Determine if we should produce executable, assembly, or object
-        bool produce_executable = !options->syntax_only && !options->dump_asm;
-        
-        // Check if output file ends with .s (assembly request)
-        size_t len = strlen(options->output_file);
-        bool output_is_assembly = (len >= 2 && strcmp(options->output_file + len - 2, ".s") == 0);
-        
-        if (produce_executable && !output_is_assembly) {
-            // Generate assembly to a temp file, then assemble and link
-            asm_file = xstrdup(options->output_file);
-            char *dot_s = xmalloc(strlen(options->output_file) + 10);
-            strcpy(dot_s, options->output_file);
-            strcat(dot_s, ".s");
-            
-            FILE *asm_out = fopen(dot_s, "w");
-            if (asm_out) {
-                codegen_generate(module, asm_out);
-                fclose(asm_out);
-            }
-            
-            // Assemble to object file using clang (handles macOS conventions)
-            char *dot_o = xstrdup(dot_s);
-            dot_o[strlen(dot_o) - 1] = 'o';  // Change .s to .o
-            
-            char cmd[512];
-            snprintf(cmd, sizeof(cmd), "clang -c '%s' -o '%s' && clang '%s' -o '%s'", dot_s, dot_o, dot_o, options->output_file);
-            int ret = system(cmd);
-            
-            // Cleanup temp files (keep for debugging)
-            // remove(dot_s);
-            // remove(dot_o);
-            // free(dot_s);
-            // free(dot_o);
-            
-            if (ret != 0) {
-                error("Linking failed\n");
-                ir_module_destroy(module);
-                analyzer_free_result(result);
-                parser_destroy(parser);
-                free(source);
-                free(asm_file);
-                return 1;
-            }
-        } else if (output_is_assembly) {
-            // Output assembly text directly
+    // Code generation - route based on target
+    if (options->target == TARGET_WASM) {
+        // WASM target - generate WAT output
+        if (options->output_file) {
             FILE *out = fopen(options->output_file, "w");
             if (out) {
-                codegen_generate(module, out);
+                wasm_codegen_generate(module, out);
                 fclose(out);
             } else {
                 error("Could not open output file: %s\n", options->output_file);
@@ -167,24 +124,90 @@ int compile_file(const char *filename, CompileOptions *options) {
                 free(source);
                 return 1;
             }
-        } else {
-            // Output assembly to file (non-.s extension)
-            FILE *out = fopen(options->output_file, "w");
-            if (out) {
-                codegen_generate(module, out);
-                fclose(out);
-            } else {
-                error("Could not open output file: %s\n", options->output_file);
-                ir_module_destroy(module);
-                analyzer_free_result(result);
-                parser_destroy(parser);
-                free(source);
-                return 1;
-            }
+        } else if (!options->dump_tokens && !options->dump_ast && !options->dump_ir) {
+            // Default: output to stdout
+            wasm_codegen_generate(module, stdout);
         }
-    } else if (!options->dump_tokens && !options->dump_ast && !options->dump_ir) {
-        // Default: output to stdout
-        codegen_generate(module, stdout);
+    } else {
+        // ARM64 target (default)
+        char *asm_file = NULL;
+        if (options->output_file) {
+            // Determine if we should produce executable, assembly, or object
+            bool produce_executable = !options->syntax_only && !options->dump_asm;
+            
+            // Check if output file ends with .s (assembly request)
+            size_t len = strlen(options->output_file);
+            bool output_is_assembly = (len >= 2 && strcmp(options->output_file + len - 2, ".s") == 0);
+            
+            if (produce_executable && !output_is_assembly) {
+                // Generate assembly to a temp file, then assemble and link
+                asm_file = xstrdup(options->output_file);
+                char *dot_s = xmalloc(strlen(options->output_file) + 10);
+                strcpy(dot_s, options->output_file);
+                strcat(dot_s, ".s");
+                
+                FILE *asm_out = fopen(dot_s, "w");
+                if (asm_out) {
+                    codegen_generate(module, asm_out);
+                    fclose(asm_out);
+                }
+                
+                // Assemble to object file using clang (handles macOS conventions)
+                char *dot_o = xstrdup(dot_s);
+                dot_o[strlen(dot_o) - 1] = 'o';  // Change .s to .o
+                
+                char cmd[512];
+                snprintf(cmd, sizeof(cmd), "clang -c '%s' -o '%s' && clang '%s' -o '%s'", dot_s, dot_o, dot_o, options->output_file);
+                int ret = system(cmd);
+                
+                // Cleanup temp files (keep for debugging)
+                // remove(dot_s);
+                // remove(dot_o);
+                // free(dot_s);
+                // free(dot_o);
+                
+                if (ret != 0) {
+                    error("Linking failed\n");
+                    ir_module_destroy(module);
+                    analyzer_free_result(result);
+                    parser_destroy(parser);
+                    free(source);
+                    free(asm_file);
+                    return 1;
+                }
+            } else if (output_is_assembly) {
+                // Output assembly text directly
+                FILE *out = fopen(options->output_file, "w");
+                if (out) {
+                    codegen_generate(module, out);
+                    fclose(out);
+                } else {
+                    error("Could not open output file: %s\n", options->output_file);
+                    ir_module_destroy(module);
+                    analyzer_free_result(result);
+                    parser_destroy(parser);
+                    free(source);
+                    return 1;
+                }
+            } else {
+                // Output assembly to file (non-.s extension)
+                FILE *out = fopen(options->output_file, "w");
+                if (out) {
+                    codegen_generate(module, out);
+                    fclose(out);
+                } else {
+                    error("Could not open output file: %s\n", options->output_file);
+                    ir_module_destroy(module);
+                    analyzer_free_result(result);
+                    parser_destroy(parser);
+                    free(source);
+                    return 1;
+                }
+            }
+        } else if (!options->dump_tokens && !options->dump_ast && !options->dump_ir) {
+            // Default: output to stdout
+            codegen_generate(module, stdout);
+        }
     }
     
     // Cleanup
@@ -207,14 +230,17 @@ void show_version(void) {
 void show_usage(void) {
     printf("Usage: %s [options] <input>\n", "c-compiler");
     printf("Options:\n");
-    printf("  -o <file>      Output to file\n");
-    printf("  -S             Compile to assembly\n");
-    printf("  -c             Compile only, do not link\n");
-    printf("  -E             Preprocess only\n");
-    printf("  -O<0-3>        Set optimization level\n");
-    printf("  --dump-tokens  Print tokens\n");
-    printf("  --dump-ast     Print AST\n");
-    printf("  --dump-ir      Print IR\n");
-    printf("  -v, --version  Print version\n");
-    printf("  -h, --help     Print this help\n");
+    printf("  -o <file>           Output to file\n");
+    printf("  -S                  Compile to assembly\n");
+    printf("  -c                  Compile only, do not link\n");
+    printf("  -E                  Preprocess only\n");
+    printf("  -O<0-3>             Set optimization level\n");
+    printf("  --target=<arch>     Target architecture (arm64, wasm)\n");
+    printf("  --list-targets      List supported targets\n");
+    printf("  --dump-tokens       Print tokens\n");
+    printf("  --dump-ast          Print AST\n");
+    printf("  --dump-ir           Print IR\n");
+    printf("  --dump-asm          Print assembly/WAT\n");
+    printf("  -v, --version       Print version\n");
+    printf("  -h, --help          Print this help\n");
 }

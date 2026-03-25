@@ -3,6 +3,12 @@
 
 #include <stdbool.h>
 
+// Target architecture
+typedef enum {
+    TARGET_ARM64,
+    TARGET_WASM
+} CompileTarget;
+
 // Compilation options
 typedef struct {
     bool dump_tokens;
@@ -15,6 +21,7 @@ typedef struct {
     int optimization_level;
     const char *output_file;
     const char *input_file;
+    CompileTarget target;
 } CompileOptions;
 
 // Compile a source file

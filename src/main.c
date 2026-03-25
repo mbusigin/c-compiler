@@ -20,7 +20,8 @@ int main(int argc, char **argv) {
         .generate_debug = false,
         .optimization_level = 0,
         .output_file = NULL,
-        .input_file = NULL
+        .input_file = NULL,
+        .target = TARGET_ARM64  // Default target
     };
     
     // Parse arguments
@@ -71,6 +72,38 @@ int main(int argc, char **argv) {
             options.dump_ir = true;
         } else if (strcmp(argv[i], "--dump-asm") == 0) {
             options.dump_asm = true;
+        } else if (strcmp(argv[i], "--target") == 0) {
+            if (i + 1 < argc) {
+                const char *target_str = argv[++i];
+                if (strcmp(target_str, "wasm") == 0 || strcmp(target_str, "webassembly") == 0) {
+                    options.target = TARGET_WASM;
+                } else if (strcmp(target_str, "arm64") == 0 || strcmp(target_str, "aarch64") == 0) {
+                    options.target = TARGET_ARM64;
+                } else {
+                    fprintf(stderr, "Error: Unknown target '%s'\n", target_str);
+                    fprintf(stderr, "Supported targets: arm64, wasm\n");
+                    return 1;
+                }
+            } else {
+                fprintf(stderr, "Error: --target requires an argument\n");
+                return 1;
+            }
+        } else if (strncmp(argv[i], "--target=", 9) == 0) {
+            const char *target_str = argv[i] + 9;
+            if (strcmp(target_str, "wasm") == 0 || strcmp(target_str, "webassembly") == 0) {
+                options.target = TARGET_WASM;
+            } else if (strcmp(target_str, "arm64") == 0 || strcmp(target_str, "aarch64") == 0) {
+                options.target = TARGET_ARM64;
+            } else {
+                fprintf(stderr, "Error: Unknown target '%s'\n", target_str);
+                fprintf(stderr, "Supported targets: arm64, wasm\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--list-targets") == 0) {
+            printf("Supported targets:\n");
+            printf("  arm64    - ARM 64-bit (Apple Silicon)\n");
+            printf("  wasm     - WebAssembly\n");
+            return 0;
         } else if (strcmp(argv[i], "-") == 0) {
             // Read from stdin
             options.input_file = NULL;  // Will trigger stdin handling
