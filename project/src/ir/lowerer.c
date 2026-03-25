@@ -1554,7 +1554,9 @@ static void lower_global_var(ASTNode *node) {
 static void lower_translation_unit(ASTNode *node) {
     for (size_t i = 0; i < list_size(node->data.unit.declarations); i++) {
         ASTNode *decl = list_get(node->data.unit.declarations, i);
-        if (decl->type == AST_FUNCTION_DECL) {
+        // Only lower function DEFINITIONS (those with bodies), not declarations
+        // Declarations like "int strncmp(...);" have no body
+        if (decl->type == AST_FUNCTION_DECL && decl->data.function.body) {
             lower_function(decl);
         } else if (decl->type == AST_VARIABLE_DECL) {
             lower_global_var(decl);

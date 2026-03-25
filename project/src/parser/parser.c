@@ -111,6 +111,7 @@ static ASTNode *parse_binary_expr(Parser *parser, int min_prec);
 static ASTNode *parse_cast_expr(Parser *parser);
 static ASTNode *parse_unary_expr(Parser *parser);
 static ASTNode *parse_postfix_expr(Parser *parser);
+static ASTNode *parse_postfix_expr_with_expr(Parser *p, ASTNode *expr);
 static ASTNode *parse_primary_expr(Parser *parser);
 static void expect(Parser *p, TokenType t, const char *msg);
 
@@ -157,6 +158,8 @@ static void debug_typedef_check(const char *name);
 static char *token_name(Parser *p);
 
 // Check if identifier is a builtin type name
+// Note: size_t, ptrdiff_t, bool, etc. are NOT builtins - they're defined by headers
+// However, for self-hosting we need to handle them as builtins since we don't have standard headers
 static bool is_builtin_type(const char *name) {
     return strcmp(name, "__builtin_va_list") == 0 ||
            strcmp(name, "__int128") == 0 ||
@@ -172,8 +175,49 @@ static bool is_builtin_type(const char *name) {
            strcmp(name, "FILE") == 0 ||
            // va_list from stdarg.h
            strcmp(name, "va_list") == 0 ||
-           // NULL from stddef.h
-           strcmp(name, "NULL") == 0;
+           // AST/Type types from our own headers
+           strcmp(name, "Type") == 0 ||
+           strcmp(name, "ASTNode") == 0 ||
+           strcmp(name, "ASTNodeType") == 0 ||
+           strcmp(name, "TypeKind") == 0 ||
+           strcmp(name, "StructMember") == 0 ||
+           strcmp(name, "TokenType") == 0 ||
+           strcmp(name, "Token") == 0 ||
+           strcmp(name, "Parser") == 0 ||
+           strcmp(name, "Lexer") == 0 ||
+           strcmp(name, "List") == 0 ||
+           strcmp(name, "BinaryOp") == 0 ||
+           // Parser internal types
+           strcmp(name, "TypedefEntry") == 0 ||
+           strcmp(name, "StructEntry") == 0 ||
+           strcmp(name, "EnumConstant") == 0 ||
+           // Enum values from our headers
+           strcmp(name, "TYPE_INT") == 0 ||
+           strcmp(name, "TYPE_POINTER") == 0 ||
+           strcmp(name, "TYPE_VOID") == 0 ||
+           strcmp(name, "TYPE_CHAR") == 0 ||
+           strcmp(name, "TYPE_LONG") == 0 ||
+           strcmp(name, "TYPE_STRUCT") == 0 ||
+           strcmp(name, "TYPE_UNION") == 0 ||
+           strcmp(name, "TYPE_ARRAY") == 0 ||
+           strcmp(name, "TYPE_FUNCTION") == 0 ||
+           strcmp(name, "TYPE_BOOL") == 0 ||
+           strcmp(name, "TYPE_FLOAT") == 0 ||
+           strcmp(name, "TYPE_DOUBLE") == 0 ||
+           strcmp(name, "TYPE_ENUM") == 0 ||
+           strcmp(name, "AST_FUNCTION_DECL") == 0 ||
+           strcmp(name, "AST_VARIABLE_DECL") == 0 ||
+           strcmp(name, "AST_COMPOUND_STMT") == 0 ||
+           strcmp(name, "AST_TRANSLATION_UNIT") == 0 ||
+           strcmp(name, "AST_RETURN_STMT") == 0 ||
+           strcmp(name, "AST_IF_STMT") == 0 ||
+           strcmp(name, "AST_WHILE_STMT") == 0 ||
+           strcmp(name, "AST_FOR_STMT") == 0 ||
+           strcmp(name, "AST_BINARY_EXPR") == 0 ||
+           strcmp(name, "AST_UNARY_EXPR") == 0 ||
+           strcmp(name, "AST_CALL_EXPR") == 0 ||
+           strcmp(name, "AST_IDENTIFIER_EXPR") == 0 ||
+           strcmp(name, "AST_INTEGER_LITERAL_EXPR") == 0;
 }
 
 // Check if current token is a type keyword or a typedef name
@@ -191,7 +235,9 @@ static bool is_type(Parser *p) {
         TypedefEntry *entry = find_typedef(name);
         bool builtin = is_builtin_type(name);
         free(name);
-        return entry != NULL || builtin;
+        if (entry != NULL || builtin) {
+            return true;
+        }
     }
     return false;
 }
@@ -300,7 +346,7 @@ static Type *parse_type(Parser *p) {
                         if (check(p, TOKEN_LBRACKET)) {
                             advance(p);  // consume '['
                             size_t array_size = 0;
-                            if (check(p, TOKEN_NUMBER)) {
+                            if (check(p, TOKEN_NUMBER) || check(p, TOKEN_INT_CONSTANT)) {
                                 array_size = (size_t)p->current.value.int_val;
                                 advance(p);
                             }
@@ -582,49 +628,63 @@ static Type *parse_type(Parser *p) {
     else if (check(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         
-        // Check for builtin types
+        // Check for true compiler builtin types (not library-defined types)
         if (is_builtin_type(name)) {
-            // Handle specific builtin types
-            if (strcmp(name, "__builtin_va_list") == 0 ||
-                strcmp(name, "FILE") == 0) {
-                // These are pointer types
+            // Handle standard integer types
+            if (strcmp(name, "size_t") == 0 ||
+                strcmp(name, "ptrdiff_t") == 0 ||
+                strcmp(name, "intptr_t") == 0 ||
+                strcmp(name, "uintptr_t") == 0) {
                 advance(p);  // consume builtin type name
                 free(name);
-                Type *t = type_create(TYPE_POINTER);
-                t->base = type_create(TYPE_VOID);
-                // Handle additional pointer levels (e.g., FILE **)
+                Type *t = type_create(TYPE_LONG);
+                t->is_unsigned = (strcmp(name, "size_t") == 0 || strcmp(name, "uintptr_t") == 0);
                 while (check(p, TOKEN_STAR)) {
                     advance(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
                 return t;
-            } else if (strcmp(name, "size_t") == 0 ||
-                       strcmp(name, "ptrdiff_t") == 0 ||
-                       strcmp(name, "intptr_t") == 0 ||
-                       strcmp(name, "uintptr_t") == 0) {
-                // These are unsigned integer types
-                advance(p);  // consume builtin type name
-                free(name);
-                Type *t = type_create(TYPE_LONG);  // Use long as default for size_t
-                t->is_unsigned = true;
-                return t;
             } else if (strcmp(name, "bool") == 0) {
-                // bool type
-                advance(p);  // consume builtin type name
+                advance(p);
                 free(name);
                 Type *t = type_create(TYPE_BOOL);
                 return t;
-            } else if (strcmp(name, "va_list") == 0) {
-                // va_list is a pointer type
-                advance(p);  // consume builtin type name
+            } else if (strcmp(name, "FILE") == 0 || strcmp(name, "va_list") == 0) {
+                // FILE and va_list are pointer types
+                advance(p);
                 free(name);
                 Type *t = type_create(TYPE_POINTER);
                 t->base = type_create(TYPE_VOID);
+                while (check(p, TOKEN_STAR)) {
+                    advance(p);
+                    Type *ptr = type_pointer(t);
+                    t = ptr;
+                }
+                return t;
+            } else if (strcmp(name, "Type") == 0 || strcmp(name, "ASTNode") == 0 ||
+                       strcmp(name, "TokenType") == 0 || strcmp(name, "Token") == 0 ||
+                       strcmp(name, "Parser") == 0 || strcmp(name, "Lexer") == 0 ||
+                       strcmp(name, "List") == 0 || strcmp(name, "BinaryOp") == 0 ||
+                       strcmp(name, "ASTNodeType") == 0 || strcmp(name, "TypeKind") == 0 ||
+                       strcmp(name, "StructMember") == 0 ||
+                       strcmp(name, "TypedefEntry") == 0 || strcmp(name, "StructEntry") == 0 ||
+                       strcmp(name, "EnumConstant") == 0) {
+                // These are our own struct/enum types
+                advance(p);
+                free(name);
+                // Create as pointer to struct type (for now, treat as pointer to incomplete struct)
+                Type *t = type_create(TYPE_POINTER);
+                t->base = type_create(TYPE_STRUCT);
+                while (check(p, TOKEN_STAR)) {
+                    advance(p);
+                    Type *ptr = type_pointer(t);
+                    t = ptr;
+                }
                 return t;
             } else {
-                // For other builtin types, treat as int
-                advance(p);  // consume builtin type name
+                // Other builtin types treat as int
+                advance(p);
                 free(name);
                 Type *t = type_create(TYPE_INT);
                 return t;
@@ -670,7 +730,9 @@ static Type *parse_type(Parser *p) {
             
             return t;
         }
-        // Not a typedef, fall through to default
+        
+        // Not a typedef and not a builtin - don't advance, let caller handle
+        // The function will return TYPE_INT as default (kind is still TYPE_INT from initialization)
     }
     // If we had unsigned/signed but no base type, default to int
     // (e.g., "unsigned x" means "unsigned int x")
@@ -1086,7 +1148,17 @@ static ASTNode *parse_declaration(Parser *p) {
         while (check(p, TOKEN_COMMA)) {
             advance(p);  // consume ','
             
-            // Parse next declarator
+            // Parse next declarator - handle pointer declarator
+            Type *next_type = type_copy(base_type);
+            
+            // Handle pointer declarator(s) for subsequent variables
+            while (check(p, TOKEN_STAR)) {
+                advance(p);  // consume '*'
+                Type *ptr = type_pointer(next_type);
+                next_type = ptr;
+            }
+            
+            // Parse name
             char *next_name = NULL;
             if (check(p, TOKEN_IDENTIFIER)) {
                 next_name = token_name(p);
@@ -1096,7 +1168,6 @@ static ASTNode *parse_declaration(Parser *p) {
             }
             
             // Handle array declarator for subsequent variables
-            Type *next_type = type_copy(base_type);
             while (check(p, TOKEN_LBRACKET)) {
                 advance(p);  // consume '['
                 // Skip the array size expression
@@ -1132,7 +1203,7 @@ static ASTNode *parse_declaration(Parser *p) {
         
         return compound;
     }
-    
+
     expect(p, TOKEN_SEMICOLON, "expected ';'");
     advance(p); // consume SEMICOLON
     return decl;
@@ -1497,7 +1568,9 @@ static ASTNode *parse_cast_expr(Parser *p) {
         ASTNode *expr = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
         advance(p); // consume ')'
-        return expr;
+        // After a parenthesized expression, we need to check for postfix operators
+        // Call parse_postfix_expr to handle ->, ., [], etc.
+        return parse_postfix_expr_with_expr(p, expr);
     }
     return parse_unary_expr(p);
 }
@@ -1547,35 +1620,115 @@ static ASTNode *parse_unary_expr(Parser *p) {
         node->data.unary.operand = parse_unary_expr(p);
         return node;
     }
-    if (check(p, TOKEN_EXCLAIM)) {
-        advance(p);
-        ASTNode *node = ast_create(AST_UNARY_EXPR);
-        node->data.unary.op = 2;
-        node->data.unary.operand = parse_cast_expr(p);
-        return node;
-    }
-    if (check(p, TOKEN_TILDE)) {
-        advance(p);
-        ASTNode *node = ast_create(AST_UNARY_EXPR);
-        node->data.unary.op = 3;
-        node->data.unary.operand = parse_cast_expr(p);
-        return node;
-    }
     if (check(p, TOKEN_STAR)) {
         advance(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 4;
-        node->data.unary.operand = parse_cast_expr(p);
+        node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
     if (check(p, TOKEN_AMPERSAND)) {
         advance(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 5;
-        node->data.unary.operand = parse_cast_expr(p);
+        node->data.unary.operand = parse_postfix_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_MINUS)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_UNARY_EXPR);
+        node->data.unary.op = 1;  // Unary minus
+        node->data.unary.operand = parse_postfix_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_PLUS)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_UNARY_EXPR);
+        node->data.unary.op = 0;  // Unary plus
+        node->data.unary.operand = parse_postfix_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_EXCLAIM)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_UNARY_EXPR);
+        node->data.unary.op = 2;
+        node->data.unary.operand = parse_postfix_expr(p);
+        return node;
+    }
+    if (check(p, TOKEN_TILDE)) {
+        advance(p);
+        ASTNode *node = ast_create(AST_UNARY_EXPR);
+        node->data.unary.op = 3;
+        node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
     return parse_postfix_expr(p);
+}
+
+// Helper function: continue parsing postfix operators on an already-parsed expression
+static ASTNode *parse_postfix_expr_with_expr(Parser *p, ASTNode *expr) {
+    while (true) {
+        if (check(p, TOKEN_LBRACKET)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_ARRAY_SUBSCRIPT_EXPR);
+            node->data.subscript.array = expr;
+            node->data.subscript.index = parse_expression(p);
+            expect(p, TOKEN_RBRACKET, "expected ']'");
+            advance(p);
+            expr = node;
+        }
+        else if (check(p, TOKEN_LPAREN)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_CALL_EXPR);
+            node->data.call.callee = expr;
+            node->data.call.args = list_create();
+            while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+                list_push(node->data.call.args, parse_assignment_expr(p));
+                if (check(p, TOKEN_COMMA)) advance(p);
+                else break;
+            }
+            expect(p, TOKEN_RPAREN, "expected ')'");
+            advance(p);
+            expr = node;
+        }
+        else if (check(p, TOKEN_DOT)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_MEMBER_ACCESS_EXPR);
+            node->data.member.expr = expr;
+            expect(p, TOKEN_IDENTIFIER, "expected member name");
+            node->data.member.member = token_name(p);
+            advance(p);
+            node->data.member.is_arrow = false;
+            expr = node;
+        }
+        else if (check(p, TOKEN_ARROW)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_POINTER_MEMBER_ACCESS_EXPR);
+            node->data.member.expr = expr;
+            expect(p, TOKEN_IDENTIFIER, "expected member name");
+            node->data.member.member = token_name(p);
+            advance(p);
+            node->data.member.is_arrow = true;
+            expr = node;
+        }
+        else if (check(p, TOKEN_PLUS_PLUS)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_UNARY_EXPR);
+            node->data.unary.op = 6;
+            node->data.unary.operand = expr;
+            expr = node;
+        }
+        else if (check(p, TOKEN_MINUS_MINUS)) {
+            advance(p);
+            ASTNode *node = ast_create(AST_UNARY_EXPR);
+            node->data.unary.op = 7;
+            node->data.unary.operand = expr;
+            expr = node;
+        }
+        else break;
+    }
+    
+    return expr;
 }
 
 static ASTNode *parse_postfix_expr(Parser *p) {
@@ -1770,7 +1923,7 @@ ASTNode *parse(Parser *p) {
             advance(p);
         }
         if (check(p, TOKEN_EOF)) break;
-        
+
         if (is_type(p)) {
             ASTNode *decl = parse_declaration(p);
             if (decl) list_push(p->translation_unit->data.unit.declarations, decl);

@@ -1,2 +1,2 @@
-#include "backend/codegen.h"
+#include "../ir/ir.h"
 IRModule *m;

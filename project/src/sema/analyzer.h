@@ -3,6 +3,7 @@
 
 #include "../parser/ast.h"
 #include "symtab.h"
+#include "../common/error.h"
 
 // Semantic analysis result
 typedef struct {
@@ -15,9 +16,5 @@ typedef struct {
 // Functions
 AnalyzeResult *analyzer_analyze(ASTNode *ast);
 void analyzer_free_result(AnalyzeResult *result);
-
-// Error reporting
-void error(const char *fmt, ...);
-void warning(const char *fmt, ...);
 
 #endif // ANALYZER_H
