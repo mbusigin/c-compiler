@@ -146,6 +146,7 @@ static void analyze_declaration(ASTNode *node) {
                 for (size_t i = 0; i < list_size(node->data.function.params); i++) {
                     ASTNode *param = list_get(node->data.function.params, i);
                     if (param->type == AST_PARAMETER_DECL) {
+                        fprintf(stderr, "DEBUG: Adding param '%s' to symbol table\n", param->data.parameter.name);
                         symtab_add(current_symtab, param->data.parameter.name,
                                   SYMBOL_PARAMETER, param->data.parameter.param_type);
                     }
@@ -274,6 +275,7 @@ static Type *analyze_expression_with_type(ASTNode *node) {
     switch (node->type) {
         case AST_IDENTIFIER_EXPR: {
             Symbol *sym = symtab_lookup(current_symtab, node->data.identifier.name);
+            fprintf(stderr, "DEBUG: Looking up identifier '%s', sym=%p\n", node->data.identifier.name, (void*)sym);
             if (!sym) {
                 error("[%d:%d] undeclared identifier '%s'\n",
                       node->line, node->column, node->data.identifier.name);
@@ -282,6 +284,7 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             sym->is_used = true;
             // Store type info on node
             node->type_info = sym->type;
+            fprintf(stderr, "DEBUG: Set type_info=%p (kind=%d) for '%s'\n", (void*)sym->type, sym->type ? sym->type->kind : -1, node->data.identifier.name);
             return sym->type;
         }
         
@@ -291,8 +294,14 @@ static Type *analyze_expression_with_type(ASTNode *node) {
         case AST_FLOAT_LITERAL_EXPR:
             return NULL;  // float type
             
-        case AST_STRING_LITERAL_EXPR:
-            return NULL;  // char* type
+        case AST_STRING_LITERAL_EXPR: {
+            // String literals have type char* (pointer to const char)
+            Type *char_type = type_create(TYPE_CHAR);
+            char_type->is_unsigned = true;  // char can be unsigned
+            Type *ptr_type = type_pointer(char_type);
+            node->type_info = ptr_type;
+            return ptr_type;
+        }
             
         case AST_BINARY_EXPR: {
             Type *left = analyze_expression_with_type(node->data.binary.left);
@@ -330,17 +339,44 @@ static Type *analyze_expression_with_type(ASTNode *node) {
         case AST_CALL_EXPR: {
             // Look up the function
             Symbol *sym = NULL;
+            Type *call_result_type = NULL;
             if (node->data.call.callee && 
                 node->data.call.callee->type == AST_IDENTIFIER_EXPR) {
                 const char *func_name = node->data.call.callee->data.identifier.name;
+                fprintf(stderr, "DEBUG: Call expr looking up '%s'\n", func_name);
                 sym = symtab_lookup(current_symtab, func_name);
                 if (!sym) {
                     // Auto-declare the function as a convenience
                     sym = symtab_add(current_symtab, func_name, SYMBOL_FUNCTION, NULL);
                 }
-                if (sym && sym->kind != SYMBOL_FUNCTION) {
-                    error("[%d:%d] '%s' is not a function\n",
-                          node->line, node->column, func_name);
+                // Set type_info on the callee for the lowerer
+                if (sym && sym->type) {
+                    node->data.call.callee->type_info = sym->type;
+                    fprintf(stderr, "DEBUG: Set callee type_info kind=%d for '%s'\n", sym->type->kind, func_name);
+                }
+                // Check if this is callable: either a function or a function pointer parameter
+                if (sym) {
+                    if (sym->kind == SYMBOL_FUNCTION) {
+                        // Direct function call - result is return type
+                        call_result_type = sym->type ? sym->type->return_type : NULL;
+                    } else if (sym->kind == SYMBOL_PARAMETER || sym->kind == SYMBOL_VARIABLE) {
+                        // Function pointer call - check if type is a function pointer
+                        Type *sym_type = sym->type;
+                        // Dereference pointer if needed
+                        while (sym_type && sym_type->kind == TYPE_POINTER) {
+                            sym_type = sym_type->base;
+                        }
+                        if (sym_type && sym_type->kind == TYPE_FUNCTION) {
+                            // This is a function pointer - callable
+                            call_result_type = sym_type->return_type;
+                        } else {
+                            error("[%d:%d] '%s' is not a function\n",
+                                  node->line, node->column, func_name);
+                        }
+                    } else {
+                        error("[%d:%d] '%s' is not a function\n",
+                              node->line, node->column, func_name);
+                    }
                 }
             }
             
@@ -349,7 +385,9 @@ static Type *analyze_expression_with_type(ASTNode *node) {
                 analyze_expression(list_get(node->data.call.args, i));
             }
             
-            return sym ? sym->type : NULL;
+            // Store the result type on the node
+            node->type_info = call_result_type;
+            return call_result_type;
         }
         
         case AST_ARRAY_SUBSCRIPT_EXPR: {
@@ -359,6 +397,7 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             if (node->data.subscript.array) {
                 Type *arr_type = node->data.subscript.array->type_info;
                 if (arr_type && arr_type->base) {
+                    node->type_info = arr_type->base;  // Set type_info for lowerer
                     return arr_type->base;
                 }
             }

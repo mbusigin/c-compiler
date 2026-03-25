@@ -24,6 +24,16 @@ static unsigned int locals_hash_fn(const char *name);
 static IRValue *lower_expression(ASTNode *node);
 static void lower_statement(ASTNode *node);
 
+// Helper: check if a type is a pointer
+static bool is_pointer_type(Type *t) {
+    return t && t->kind == TYPE_POINTER;
+}
+
+// Helper: check if an AST node evaluates to a pointer type
+static bool is_pointer_result(ASTNode *node) {
+    return node && node->type_info && is_pointer_type(node->type_info);
+}
+
 // Helper: check if an AST node contains a function call
 static bool contains_call(ASTNode *node) {
     if (!node) return false;
@@ -239,6 +249,10 @@ static IRValue *lower_identifier(ASTNode *node) {
     if (param_idx >= 0) {
         // Parameters are stored on the stack - need to load the value
         IRValue *param_val = param_values[param_idx];
+        // Mark as pointer if the type is a pointer
+        if (is_pointer_result(node)) {
+            param_val->is_pointer = true;
+        }
         IRInstruction *load_instr = ir_instr_create(IR_LOAD_STACK);
         load_instr->result = param_val;
         add_instr(load_instr);
@@ -246,6 +260,7 @@ static IRValue *lower_identifier(ASTNode *node) {
         IRValue *result = ir_value_create(IR_VALUE_INT);
         result->is_constant = false;
         result->is_temp = true;
+        result->is_pointer = is_pointer_result(node);
         return result;
     }
     
@@ -260,6 +275,7 @@ static IRValue *lower_identifier(ASTNode *node) {
             addr_val->is_constant = false;
             addr_val->is_temp = true;
             addr_val->is_address = true;  // Mark as address for 64-bit operations
+            addr_val->is_pointer = true;  // Address is a pointer
             IRInstruction *addr_instr = ir_instr_create(IR_LEA);
             addr_instr->result = addr_val;
             add_instr(addr_instr);
@@ -272,6 +288,7 @@ static IRValue *lower_identifier(ASTNode *node) {
         result->is_temp = true;
         result->offset = lv->offset;
         result->param_reg = -2;  // Mark as local variable (stack-relative)
+        result->is_pointer = is_pointer_result(node);
         IRInstruction *load_instr = ir_instr_create(IR_LOAD_STACK);
         load_instr->result = result;
         add_instr(load_instr);
@@ -821,9 +838,19 @@ static IRValue *lower_call_expr(ASTNode *node) {
     for (size_t i = 0; i < list_size(node->data.call.args); i++) {
         IRValue *arg = lower_expression(list_get(node->data.call.args, i));
         
-        // If this argument is a temp (result of a nested call), save it to stack
-        // before evaluating the next argument to avoid clobbering x8
+        // Check if next argument is a string literal (which doesn't modify x8)
+        bool next_is_string_literal = false;
         if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1) {
+            ASTNode *next_arg_node = list_get(node->data.call.args, i + 1);
+            if (next_arg_node && next_arg_node->type == AST_STRING_LITERAL_EXPR) {
+                next_is_string_literal = true;
+            }
+        }
+        
+        // If this argument is a temp and the next argument might modify x8,
+        // save it to stack before evaluating the next argument
+        // Skip saving if next argument is a string literal (doesn't emit IR, preserves x8)
+        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1 && !next_is_string_literal) {
             // Allocate a stack slot for this temp
             temp_slot = locals_size;
             locals_size += 8;
@@ -831,6 +858,8 @@ static IRValue *lower_call_expr(ASTNode *node) {
             // Store the temp to the stack slot
             IRValue *store_result = ir_value_create(IR_VALUE_INT);
             store_result->offset = temp_slot;
+            IRValue *store_result2 = ir_value_create(IR_VALUE_INT);
+            store_result2->offset = temp_slot;
             IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
             store_i->result = store_result;
             add_instr(store_i);
@@ -841,6 +870,7 @@ static IRValue *lower_call_expr(ASTNode *node) {
             saved_arg->is_temp = false;
             saved_arg->param_reg = -2;  // Mark as local variable (stack-relative)
             saved_arg->offset = temp_slot;
+            saved_arg->is_pointer = arg->is_pointer;  // Preserve pointer flag!
             arg = saved_arg;
             
             // Also emit IR_ALLOCA for consistency
@@ -945,9 +975,11 @@ static IRValue *lower_expression(ASTNode *node) {
             return lower_expression(node->data.cast.operand);
 
         case AST_ARRAY_SUBSCRIPT_EXPR: {
-            // table[i] - load from table + i*4
+            // table[i] - load from table + i*8 (for pointer arrays)
+            // Strategy: compute index first, then load pointer, then compute address and load
             ASTNode *base_node = node->data.subscript.array;
             ASTNode *index_node = node->data.subscript.index;
+            bool result_is_pointer = is_pointer_result(node);
             
             if (base_node && base_node->type == AST_IDENTIFIER_EXPR) {
                 const char *base_name = base_node->data.identifier.name;
@@ -955,26 +987,29 @@ static IRValue *lower_expression(ASTNode *node) {
                 // Check if base is a parameter (pointer)
                 int param_idx = find_param_index(base_name);
                 if (param_idx >= 0) {
-                    // Base is a pointer parameter - load the pointer value
+                    // Load the pointer value first (this will be clobbered by index computation)
                     IRValue *ptr_val = param_values[param_idx];
-                    // Load pointer from stack
+                    ptr_val->is_pointer = true;
                     IRInstruction *load_ptr = ir_instr_create(IR_LOAD_STACK);
                     load_ptr->result = ptr_val;
                     add_instr(load_ptr);
                     
-                    // Now x8 has the pointer value
-                    // Evaluate index
+                    // Move pointer to x20 (callee-saved) immediately
+                    IRInstruction *save_ptr = ir_instr_create(IR_SAVE_X8_TO_X20);
+                    add_instr(save_ptr);
+                    
+                    // Evaluate index (clobbers x8)
                     IRValue *index_val = lower_expression(index_node);
                     
-                    // Scale index by 4
+                    // Scale index by 8 (sizeof pointer))
                     IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                    scale_val->data.int_val = 4;
+                    scale_val->data.int_val = 8;
                     scale_val->is_constant = true;
                     IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                     scale_instr->result = scale_val;
                     add_instr(scale_instr);
                     
-                    // index * 4
+                    // index * 8 (result in x0 from emit_load_binary_args, then x8)
                     IRInstruction *mul_instr = ir_instr_create(IR_MUL);
                     mul_instr->result = ir_value_create(IR_VALUE_INT);
                     mul_instr->result->is_constant = false;
@@ -984,24 +1019,17 @@ static IRValue *lower_expression(ASTNode *node) {
                     mul_instr->num_args = 2;
                     add_instr(mul_instr);
                     
-                    // Save offset to x21
-                    IRInstruction *save_offset = ir_instr_create(IR_SAVE_X8);
-                    add_instr(save_offset);
-                    
-                    // Reload pointer
-                    IRInstruction *load_ptr2 = ir_instr_create(IR_LOAD_STACK);
-                    load_ptr2->result = ptr_val;
-                    add_instr(load_ptr2);
-                    
-                    // Add pointer + offset
+                    // Now x8 has scaled index, x20 has pointer
+                    // Add pointer + scaled index: x8 = x20 + x8
                     IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
                     add_i->result = ir_value_create(IR_VALUE_INT);
                     add_instr(add_i);
                     
-                    // Load from address
+                    // Load from address (x8 has the address)
                     IRInstruction *load_i = ir_instr_create(IR_LOAD);
                     load_i->result = ir_value_create(IR_VALUE_INT);
                     load_i->result->is_temp = true;
+                    load_i->result->is_pointer = result_is_pointer;
                     load_i->num_args = 0;
                     add_instr(load_i);
                     

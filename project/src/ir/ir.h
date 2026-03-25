@@ -9,6 +9,7 @@
 
 typedef enum {
     IR_NOP, IR_LABEL, IR_JMP, IR_JMP_IF, IR_RET, IR_RET_VOID, IR_CALL,
+    IR_CALL_INDIRECT,
     IR_LOAD, IR_STORE, IR_ALLOCA, IR_ADD, IR_ADD_F, IR_SUB, IR_SUB_F,
     IR_MUL, IR_MUL_F, IR_DIV, IR_DIV_F, IR_MOD, IR_NEG, IR_NEG_F,
     IR_AND, IR_OR, IR_XOR, IR_SHL, IR_SHR, IR_NOT,
@@ -19,13 +20,15 @@ typedef enum {
     IR_LOAD_GLOBAL, IR_STORE_GLOBAL,
     IR_LOAD_STACK, IR_STORE_STACK,
     IR_STORE_PARAM,  // Store parameter register to stack slot
-    IR_SAVE_X8,  // Save x8 to x21 (for post-increment original value)
-    IR_RESTORE_X8_RESULT,  // Restore result from x21 after post-increment
+    IR_SAVE_X8,  // Save x8 to x22 (for post-increment original value)
+    IR_RESTORE_X8_RESULT,  // Restore result from x22 after post-increment
+    IR_SAVE_X8_TO_X20,  // Save x8 to x20 (preserve pointer across reload)
+    IR_RESTORE_X8_FROM_X20,  // Restore x8 from x20
     IR_LOAD_OFFSET,   // Load from [base_ptr + offset*4]
     IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
     IR_STORE_INDIRECT, // Store w8 to [x21] (address in x21, value in x8)
     IR_LEA,           // Load effective address: x8 = sp + offset
-    IR_ADD_X21,       // x8 = x21 + x8 (add saved address to offset)
+    IR_ADD_X21,       // x8 = x22 + x8 (add saved address to offset)
     IR_ADD_IMM64      // x8 = x8 + imm (64-bit add for pointer arithmetic)
 } IROpcode;
 
@@ -38,6 +41,7 @@ typedef struct IRValue {
     bool is_constant;  // True if this is a compile-time constant
     bool is_temp;     // True if this is a temporary (result of previous instruction)
     bool is_address;  // True if this value is an address (from LEA)
+    bool is_pointer;  // True if this value is a pointer (needs 8-byte load/store)
     int param_reg;     // For parameters: which register (x0-x3) it's in; -2 = local var
     int offset;        // For local variables: stack offset
 } IRValue;

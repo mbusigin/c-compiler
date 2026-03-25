@@ -31,6 +31,9 @@ static void emit_instr(const char *fmt, ...) {
     va_end(args);
 }
 
+// Forward declaration for emit_immediate (used in prologue before definition)
+static void emit_immediate(int reg, long long value);
+
 static void prologue(int locals_size) {
     // Allocate locals aligned to 16 bytes, plus 16 bytes for saved fp/lr
     // Stack grows down: [saved fp/lr at lower addresses, locals at higher addresses]
@@ -144,7 +147,12 @@ static void emit_load_value(int reg, IRValue *val) {
             } else if (val->param_reg == -2 || val->param_reg == -3) {
                 // It's a local variable on the stack - load from [sp, #offset]
                 // val->offset contains the stack offset
-                emit_instr("ldr\tw%d, [sp, #%d]", reg, val->offset);
+                // Use 64-bit load for pointers, 32-bit for integers
+                if (val->is_pointer) {
+                    emit_instr("ldr\tx%d, [sp, #%d]", reg, val->offset);
+                } else {
+                    emit_instr("ldr\tw%d, [sp, #%d]", reg, val->offset);
+                }
             } else if (val->param_reg == -4) {
                 // Special: indicates this is a LOAD_STACK result that needs the offset from result field
                 // This case should not normally be reached
@@ -316,6 +324,24 @@ static void gen_instr(IRInstruction *instr) {
             x8_temp_type = 1;  // x8 has the return value
             break;
         }
+        
+        case IR_CALL_INDIRECT: {
+            // Indirect call through function pointer
+            // The callee (fn) is in x0, and arguments are in their original registers (x1, x2, x3)
+            // We just need to call through x0
+            
+            // Indirect call through x0
+            emit_instr("blr\tx0");
+            
+            // Save return value to x8 for future use
+            emit_instr("mov\tx8, x0");
+            
+            if (instr->result) {
+                instr->result->is_temp = true;
+            }
+            x8_temp_type = 1;
+            break;
+        }
             
         case IR_ADD: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
@@ -333,7 +359,8 @@ static void gen_instr(IRInstruction *instr) {
 
         case IR_MUL: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("mul\tw0, w0, w1");
+            // Use 64-bit multiplication for pointer arithmetic
+            emit_instr("mul\tx0, x0, x1");
             emit_instr("mov\tx8, x0");
             break;
         }
@@ -503,13 +530,23 @@ static void gen_instr(IRInstruction *instr) {
             // Otherwise, x0 contains the address
             if (instr->num_args == 0) {
                 // Load from address in x8
-                emit_instr("ldr\tw8, [x8]");
-                x8_temp_type = 1;
-                x9_temp_type = 1;
+                // Use 8-byte load for pointers, 4-byte for integers
+                if (instr->result && instr->result->is_pointer) {
+                    emit_instr("ldr\tx8, [x8]");  // 8-byte load for pointers
+                } else {
+                    emit_instr("ldr\tw8, [x8]");  // 4-byte load for integers
+                }
+                // x8 now has the loaded value - don't set temp type here
+                // as the caller (e.g., IR_CALL) should not save this value
             } else {
                 // Legacy behavior: x0 contains the address
-                emit_instr("ldr\tw0, [x0]");
-                emit_instr("mov\tx8, x0");
+                if (instr->result && instr->result->is_pointer) {
+                    emit_instr("ldr\tx0, [x0]");
+                    emit_instr("mov\tx8, x0");
+                } else {
+                    emit_instr("ldr\tw0, [x0]");
+                    emit_instr("mov\tx8, x0");
+                }
             }
             break;
             
@@ -529,11 +566,11 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx21, x9");  // Save x9 before it gets clobbered
                 }
                 emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
-                // Check if this is a parameter (param_reg == -2) - use 64-bit load for pointers
-                if (instr->result->param_reg == -2) {
-                    emit_instr("ldr\tx0, [sp, #%d]", offset);  // 64-bit load for parameters (pointers)
+                // Use 64-bit load for pointers or parameters, 32-bit for integers
+                if (instr->result->is_pointer || instr->result->param_reg == -2) {
+                    emit_instr("ldr\tx0, [sp, #%d]", offset);  // 64-bit load for pointers
                 } else {
-                    emit_instr("ldr\tw0, [sp, #%d]", offset);  // 32-bit load for local variables
+                    emit_instr("ldr\tw0, [sp, #%d]", offset);  // 32-bit load for integers
                 }
                 emit_instr("mov\tx8, x0");  // Save loaded value to x8
                 if (old_x9_type == 1 || old_x9_type == 2) {
@@ -549,9 +586,11 @@ static void gen_instr(IRInstruction *instr) {
             // Store value to [sp, #offset]
             // The value is in x8 (from the previous load or const_int)
             // result->offset = stack offset
+            // Use 8-byte store by default for all values to avoid truncation issues
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
-                emit_instr("str\tw8, [sp, #%d]", offset);
+                // Use 8-byte store for all values to avoid pointer truncation
+                emit_instr("str\tx8, [sp, #%d]", offset);
             }
             break;
         }
@@ -599,16 +638,27 @@ static void gen_instr(IRInstruction *instr) {
             break;
 
         case IR_SAVE_X8:
-            // Save x8 to x22 (callee-saved) for later use (e.g., post-increment original value, or array address)
-            emit_instr("mov\tx22, x8");
+            // Save x8 to x23 (callee-saved) for later use (e.g., post-increment original value, or array address)
+            emit_instr("mov\tx23, x8");
             break;
 
         case IR_RESTORE_X8_RESULT:
-            // For post-increment: result should be original value (in x22)
-            emit_instr("mov\tx0, x22");  // Return original value
-            emit_instr("mov\tx8, x22");  // x8 also has original value
+            // For post-increment: result should be original value (in x23)
+            emit_instr("mov\tx0, x23");  // Return original value
+            emit_instr("mov\tx8, x23");  // x8 also has original value
             x8_temp_type = 1;  // x8 has temp result
             x9_temp_type = 1;  // x9 has temp result
+            break;
+            
+        case IR_SAVE_X8_TO_X20:
+            // Save x8 to x20 (callee-saved) to preserve across reload
+            emit_instr("mov\tx20, x8");
+            break;
+            
+        case IR_RESTORE_X8_FROM_X20:
+            // Restore x8 from x20
+            emit_instr("mov\tx8, x20");
+            x8_temp_type = 1;  // x8 has the restored value
             break;
             
         case IR_LOAD_OFFSET:
@@ -668,8 +718,8 @@ static void gen_instr(IRInstruction *instr) {
             break;
             
         case IR_ADD_X21:
-            // x8 = x22 + x8 (add saved address in x22 to offset in x8)
-            emit_instr("add\tx8, x22, x8");
+            // x8 = x20 + x8 (add saved pointer in x20 to offset in x8)
+            emit_instr("add\tx8, x20, x8");
             x8_temp_type = 1;
             x9_temp_type = 1;
             break;

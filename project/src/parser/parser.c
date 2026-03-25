@@ -116,16 +116,16 @@ static ASTNode *parse_primary_expr(Parser *parser);
 static void expect(Parser *p, TokenType t, const char *msg);
 
 // Helper functions
-static void advance(Parser *p) { 
+static void advance_p(Parser *p) { 
     p->previous = p->current; 
     p->current = lexer_next_token(p->lexer); 
 }
-static TokenType peek(Parser *p) { return p->current.type; }
-static bool check(Parser *p, TokenType t) { return peek(p) == t; }
+static TokenType peek_p(Parser *p) { return p->current.type; }
+static bool check_p(Parser *p, TokenType t) { return peek_p(p) == t; }
 
 // Look at the token after the current one without consuming it
 __attribute__((unused))
-static TokenType peek_next(Parser *p) {
+static TokenType peek_next_p(Parser *p) {
     // Save lexer state
     size_t saved_pos = p->lexer->position;
     int saved_line = p->lexer->line;
@@ -223,14 +223,14 @@ static bool is_builtin_type(const char *name) {
 // Check if current token is a type keyword or a typedef name
 static bool is_type(Parser *p) {
     // Check for 'typedef' keyword
-    if (check(p, TOKEN_TYPEDEF)) {
+    if (check_p(p, TOKEN_TYPEDEF)) {
         return true;
     }
-    if (is_type_keyword(peek(p))) {
+    if (is_type_keyword(peek_p(p))) {
         return true;
     }
     // Check for typedef name or builtin type
-    if (check(p, TOKEN_IDENTIFIER)) {
+    if (check_p(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         TypedefEntry *entry = find_typedef(name);
         bool builtin = is_builtin_type(name);
@@ -254,22 +254,22 @@ static char *token_name(Parser *p) {
 // Skip __attribute__((...)) if present
 static void skip_attribute(Parser *p) {
     // Check if current token is __attribute__
-    if (check(p, TOKEN_IDENTIFIER)) {
+    if (check_p(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         if (strcmp(name, "__attribute__") == 0) {
-            advance(p);  // consume __attribute__
+            advance_p(p);  // consume __attribute__
             free(name);
             // Expect ((...))
-            if (check(p, TOKEN_LPAREN)) {
-                advance(p);  // consume (
-                if (check(p, TOKEN_LPAREN)) {
-                    advance(p);  // consume (
+            if (check_p(p, TOKEN_LPAREN)) {
+                advance_p(p);  // consume (
+                if (check_p(p, TOKEN_LPAREN)) {
+                    advance_p(p);  // consume (
                     // Skip until matching ))
                     int depth = 2;
-                    while (depth > 0 && !check(p, TOKEN_EOF)) {
-                        if (check(p, TOKEN_LPAREN)) depth++;
-                        else if (check(p, TOKEN_RPAREN)) depth--;
-                        advance(p);
+                    while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                        if (check_p(p, TOKEN_LPAREN)) depth++;
+                        else if (check_p(p, TOKEN_RPAREN)) depth--;
+                        advance_p(p);
                     }
                 }
             }
@@ -285,43 +285,43 @@ static Type *parse_type(Parser *p) {
     bool is_unsigned = false;
     
     // Handle type qualifiers (const)
-    while (check(p, TOKEN_CONST)) {
-        advance(p);  // skip 'const'
+    while (check_p(p, TOKEN_CONST)) {
+        advance_p(p);  // skip 'const'
     }
     
     // Handle signed/unsigned modifiers
-    while (check(p, TOKEN_SIGNED) || check(p, TOKEN_UNSIGNED)) {
-        if (check(p, TOKEN_UNSIGNED)) {
+    while (check_p(p, TOKEN_SIGNED) || check_p(p, TOKEN_UNSIGNED)) {
+        if (check_p(p, TOKEN_UNSIGNED)) {
             is_unsigned = true;
-            advance(p);
-        } else if (check(p, TOKEN_SIGNED)) {
+            advance_p(p);
+        } else if (check_p(p, TOKEN_SIGNED)) {
             is_unsigned = false;
-            advance(p);
+            advance_p(p);
         }
     }
     
     // Handle struct/union type reference
-    if (check(p, TOKEN_STRUCT)) {
-        advance(p);  // consume 'struct'
+    if (check_p(p, TOKEN_STRUCT)) {
+        advance_p(p);  // consume 'struct'
         
         char *struct_name = NULL;
-        if (check(p, TOKEN_IDENTIFIER)) {
+        if (check_p(p, TOKEN_IDENTIFIER)) {
             // struct Name - reference to named struct
             struct_name = token_name(p);
-            advance(p);  // consume name
+            advance_p(p);  // consume name
         }
         
         // Check for struct definition { ... }
-        if (check(p, TOKEN_LBRACE)) {
+        if (check_p(p, TOKEN_LBRACE)) {
             // Create new struct type with definition
             Type *t = type_create(TYPE_STRUCT);
             t->is_unsigned = false;
             t->struct_name = struct_name;
             
-            advance(p);  // consume '{'
+            advance_p(p);  // consume '{'
             
             // Parse member declarations
-            while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
                 // Parse member type
                 Type *member_base_type = parse_type(p);
                 if (!member_base_type) {
@@ -329,28 +329,28 @@ static Type *parse_type(Parser *p) {
                 }
                 
                 // Parse member name(s) - can have multiple members of same type on one line
-                while (!check(p, TOKEN_SEMICOLON) && !check(p, TOKEN_EOF)) {
+                while (!check_p(p, TOKEN_SEMICOLON) && !check_p(p, TOKEN_EOF)) {
                     // Handle pointer modifiers
                     Type *member_type = type_copy(member_base_type);
-                    while (check(p, TOKEN_STAR)) {
-                        advance(p);
+                    while (check_p(p, TOKEN_STAR)) {
+                        advance_p(p);
                         Type *ptr = type_pointer(member_type);
                         member_type = ptr;
                     }
                     
-                    if (check(p, TOKEN_IDENTIFIER)) {
+                    if (check_p(p, TOKEN_IDENTIFIER)) {
                         char *member_name = token_name(p);
-                        advance(p);
+                        advance_p(p);
                         
                         // Handle array dimensions
-                        if (check(p, TOKEN_LBRACKET)) {
-                            advance(p);  // consume '['
+                        if (check_p(p, TOKEN_LBRACKET)) {
+                            advance_p(p);  // consume '['
                             size_t array_size = 0;
-                            if (check(p, TOKEN_NUMBER) || check(p, TOKEN_INT_CONSTANT)) {
+                            if (check_p(p, TOKEN_NUMBER) || check_p(p, TOKEN_INT_CONSTANT)) {
                                 array_size = (size_t)p->current.value.int_val;
-                                advance(p);
+                                advance_p(p);
                             }
-                            if (check(p, TOKEN_RBRACKET)) advance(p);
+                            if (check_p(p, TOKEN_RBRACKET)) advance_p(p);
                             if (array_size > 0 && member_type) {
                                 Type *arr = type_array(member_type, array_size);
                                 member_type = arr;
@@ -365,19 +365,19 @@ static Type *parse_type(Parser *p) {
                     }
                     
                     // Check for comma (multiple members of same type)
-                    if (check(p, TOKEN_COMMA)) {
-                        advance(p);
+                    if (check_p(p, TOKEN_COMMA)) {
+                        advance_p(p);
                         // Continue to next member
                     } else {
                         break;
                     }
                 }
                 
-                if (check(p, TOKEN_SEMICOLON)) advance(p);
+                if (check_p(p, TOKEN_SEMICOLON)) advance_p(p);
                 type_free(member_base_type);
             }
             
-            if (check(p, TOKEN_RBRACE)) advance(p);  // consume '}'
+            if (check_p(p, TOKEN_RBRACE)) advance_p(p);  // consume '}'
             
             // Finalize struct size and alignment
             t->align = type_compute_struct_alignment(t);
@@ -389,8 +389,8 @@ static Type *parse_type(Parser *p) {
             }
             
             // Handle pointer suffix
-            while (check(p, TOKEN_STAR)) {
-                advance(p);
+            while (check_p(p, TOKEN_STAR)) {
+                advance_p(p);
                 Type *ptr = type_pointer(t);
                 t = ptr;
             }
@@ -407,8 +407,8 @@ static Type *parse_type(Parser *p) {
                 Type *t = type_copy(existing);
                 
                 // Handle pointer suffix
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -420,8 +420,8 @@ static Type *parse_type(Parser *p) {
                 t->struct_name = struct_name;
                 
                 // Handle pointer suffix
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -431,26 +431,26 @@ static Type *parse_type(Parser *p) {
     }
     
     // Handle union type reference
-    if (check(p, TOKEN_UNION)) {
-        advance(p);  // consume 'union'
+    if (check_p(p, TOKEN_UNION)) {
+        advance_p(p);  // consume 'union'
         
         char *union_name = NULL;
-        if (check(p, TOKEN_IDENTIFIER)) {
+        if (check_p(p, TOKEN_IDENTIFIER)) {
             union_name = token_name(p);
-            advance(p);  // consume name
+            advance_p(p);  // consume name
         }
         
         // Check for union definition { ... }
-        if (check(p, TOKEN_LBRACE)) {
+        if (check_p(p, TOKEN_LBRACE)) {
             // Create new union type with definition
             Type *t = type_create(TYPE_UNION);
             t->is_unsigned = false;
             t->struct_name = union_name;
             
-            advance(p);  // consume '{'
+            advance_p(p);  // consume '{'
             
             // Parse member declarations (same as struct)
-            while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
                 // Parse member type
                 Type *member_base_type = parse_type(p);
                 if (!member_base_type) {
@@ -458,27 +458,27 @@ static Type *parse_type(Parser *p) {
                 }
                 
                 // Parse member name(s)
-                while (!check(p, TOKEN_SEMICOLON) && !check(p, TOKEN_EOF)) {
+                while (!check_p(p, TOKEN_SEMICOLON) && !check_p(p, TOKEN_EOF)) {
                     Type *member_type = type_copy(member_base_type);
-                    while (check(p, TOKEN_STAR)) {
-                        advance(p);
+                    while (check_p(p, TOKEN_STAR)) {
+                        advance_p(p);
                         Type *ptr = type_pointer(member_type);
                         member_type = ptr;
                     }
                     
-                    if (check(p, TOKEN_IDENTIFIER)) {
+                    if (check_p(p, TOKEN_IDENTIFIER)) {
                         char *member_name = token_name(p);
-                        advance(p);
+                        advance_p(p);
                         
                         // Handle array dimensions
-                        if (check(p, TOKEN_LBRACKET)) {
-                            advance(p);
+                        if (check_p(p, TOKEN_LBRACKET)) {
+                            advance_p(p);
                             size_t array_size = 0;
-                            if (check(p, TOKEN_NUMBER)) {
+                            if (check_p(p, TOKEN_NUMBER)) {
                                 array_size = (size_t)p->current.value.int_val;
-                                advance(p);
+                                advance_p(p);
                             }
-                            if (check(p, TOKEN_RBRACKET)) advance(p);
+                            if (check_p(p, TOKEN_RBRACKET)) advance_p(p);
                             if (array_size > 0 && member_type) {
                                 Type *arr = type_array(member_type, array_size);
                                 member_type = arr;
@@ -492,18 +492,18 @@ static Type *parse_type(Parser *p) {
                         type_free(member_type);
                     }
                     
-                    if (check(p, TOKEN_COMMA)) {
-                        advance(p);
+                    if (check_p(p, TOKEN_COMMA)) {
+                        advance_p(p);
                     } else {
                         break;
                     }
                 }
                 
-                if (check(p, TOKEN_SEMICOLON)) advance(p);
+                if (check_p(p, TOKEN_SEMICOLON)) advance_p(p);
                 type_free(member_base_type);
             }
             
-            if (check(p, TOKEN_RBRACE)) advance(p);
+            if (check_p(p, TOKEN_RBRACE)) advance_p(p);
             
             // Finalize union size and alignment
             t->align = type_compute_struct_alignment(t);
@@ -515,8 +515,8 @@ static Type *parse_type(Parser *p) {
             }
             
             // Handle pointer suffix
-            while (check(p, TOKEN_STAR)) {
-                advance(p);
+            while (check_p(p, TOKEN_STAR)) {
+                advance_p(p);
                 Type *ptr = type_pointer(t);
                 t = ptr;
             }
@@ -531,8 +531,8 @@ static Type *parse_type(Parser *p) {
                 
                 Type *t = type_copy(existing);
                 
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -543,8 +543,8 @@ static Type *parse_type(Parser *p) {
                 t->is_unsigned = false;
                 t->struct_name = union_name;
                 
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -554,35 +554,35 @@ static Type *parse_type(Parser *p) {
     }
     
     // Handle enum type reference
-    if (check(p, TOKEN_ENUM)) {
-        advance(p);  // consume 'enum'
-        if (check(p, TOKEN_IDENTIFIER)) {
-            advance(p);  // consume name
+    if (check_p(p, TOKEN_ENUM)) {
+        advance_p(p);  // consume 'enum'
+        if (check_p(p, TOKEN_IDENTIFIER)) {
+            advance_p(p);  // consume name
         }
         // Check for enum definition { ... }
-        if (check(p, TOKEN_LBRACE)) {
-            advance(p);  // consume '{'
+        if (check_p(p, TOKEN_LBRACE)) {
+            advance_p(p);  // consume '{'
             // Parse enum constants
             int next_value = 0;
-            while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
                 // Parse constant name
-                if (check(p, TOKEN_IDENTIFIER)) {
+                if (check_p(p, TOKEN_IDENTIFIER)) {
                     char *const_name = token_name(p);
-                    advance(p);
+                    advance_p(p);
                     
                     // Check for explicit value
                     int value = next_value;
-                    if (check(p, TOKEN_ASSIGN)) {
-                        advance(p);  // consume '='
+                    if (check_p(p, TOKEN_ASSIGN)) {
+                        advance_p(p);  // consume '='
                         // Parse the value expression (must be constant)
                         // For now, just parse simple integer literals
-                        if (check(p, TOKEN_INT_CONSTANT) || check(p, TOKEN_NUMBER)) {
+                        if (check_p(p, TOKEN_INT_CONSTANT) || check_p(p, TOKEN_NUMBER)) {
                             value = (int)p->current.value.int_val;
-                            advance(p);
+                            advance_p(p);
                         } else {
                             // Skip to next comma or brace
-                            while (!check(p, TOKEN_COMMA) && !check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
-                                advance(p);
+                            while (!check_p(p, TOKEN_COMMA) && !check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
+                                advance_p(p);
                             }
                         }
                     }
@@ -593,17 +593,17 @@ static Type *parse_type(Parser *p) {
                     free(const_name);
                 }
                 
-                if (check(p, TOKEN_COMMA)) advance(p);
+                if (check_p(p, TOKEN_COMMA)) advance_p(p);
             }
-            if (check(p, TOKEN_RBRACE)) advance(p);  // consume '}'
+            if (check_p(p, TOKEN_RBRACE)) advance_p(p);  // consume '}'
         }
         // Create enum type (it's int-like)
         Type *t = type_create(TYPE_ENUM);
         t->is_unsigned = false;
         
         // Handle pointer suffix
-        while (check(p, TOKEN_STAR)) {
-            advance(p);
+        while (check_p(p, TOKEN_STAR)) {
+            advance_p(p);
             Type *ptr = type_pointer(t);
             t = ptr;
         }
@@ -612,20 +612,20 @@ static Type *parse_type(Parser *p) {
     }
     
     // Then handle the base type
-    if (check(p, TOKEN_VOID)) { advance(p); kind = TYPE_VOID; }
-    else if (check(p, TOKEN_CHAR)) { advance(p); kind = TYPE_CHAR; }
-    else if (check(p, TOKEN_FLOAT)) { advance(p); kind = TYPE_FLOAT; }
-    else if (check(p, TOKEN_DOUBLE)) { advance(p); kind = TYPE_DOUBLE; }
-    else if (check(p, TOKEN_SHORT)) { advance(p); kind = TYPE_SHORT; }
-    else if (check(p, TOKEN_LONG)) { 
-        advance(p); 
-        if (check(p, TOKEN_LONG)) { advance(p); kind = TYPE_LONGLONG; }
+    if (check_p(p, TOKEN_VOID)) { advance_p(p); kind = TYPE_VOID; }
+    else if (check_p(p, TOKEN_CHAR)) { advance_p(p); kind = TYPE_CHAR; }
+    else if (check_p(p, TOKEN_FLOAT)) { advance_p(p); kind = TYPE_FLOAT; }
+    else if (check_p(p, TOKEN_DOUBLE)) { advance_p(p); kind = TYPE_DOUBLE; }
+    else if (check_p(p, TOKEN_SHORT)) { advance_p(p); kind = TYPE_SHORT; }
+    else if (check_p(p, TOKEN_LONG)) { 
+        advance_p(p); 
+        if (check_p(p, TOKEN_LONG)) { advance_p(p); kind = TYPE_LONGLONG; }
         else kind = TYPE_LONG;
     }
-    else if (check(p, TOKEN_INT)) { advance(p); kind = TYPE_INT; }
-    else if (check(p, TOKEN_BOOL)) { advance(p); kind = TYPE_BOOL; }
+    else if (check_p(p, TOKEN_INT)) { advance_p(p); kind = TYPE_INT; }
+    else if (check_p(p, TOKEN_BOOL)) { advance_p(p); kind = TYPE_BOOL; }
     // Check for builtin types like __builtin_va_list
-    else if (check(p, TOKEN_IDENTIFIER)) {
+    else if (check_p(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         
         // Check for true compiler builtin types (not library-defined types)
@@ -635,29 +635,29 @@ static Type *parse_type(Parser *p) {
                 strcmp(name, "ptrdiff_t") == 0 ||
                 strcmp(name, "intptr_t") == 0 ||
                 strcmp(name, "uintptr_t") == 0) {
-                advance(p);  // consume builtin type name
+                advance_p(p);  // consume builtin type name
                 free(name);
                 Type *t = type_create(TYPE_LONG);
                 t->is_unsigned = (strcmp(name, "size_t") == 0 || strcmp(name, "uintptr_t") == 0);
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
                 return t;
             } else if (strcmp(name, "bool") == 0) {
-                advance(p);
+                advance_p(p);
                 free(name);
                 Type *t = type_create(TYPE_BOOL);
                 return t;
             } else if (strcmp(name, "FILE") == 0 || strcmp(name, "va_list") == 0) {
                 // FILE and va_list are pointer types
-                advance(p);
+                advance_p(p);
                 free(name);
                 Type *t = type_create(TYPE_POINTER);
                 t->base = type_create(TYPE_VOID);
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -671,20 +671,20 @@ static Type *parse_type(Parser *p) {
                        strcmp(name, "TypedefEntry") == 0 || strcmp(name, "StructEntry") == 0 ||
                        strcmp(name, "EnumConstant") == 0) {
                 // These are our own struct/enum types
-                advance(p);
+                advance_p(p);
                 free(name);
                 // Create as pointer to struct type (for now, treat as pointer to incomplete struct)
                 Type *t = type_create(TYPE_POINTER);
                 t->base = type_create(TYPE_STRUCT);
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
                 return t;
             } else {
                 // Other builtin types treat as int
-                advance(p);
+                advance_p(p);
                 free(name);
                 Type *t = type_create(TYPE_INT);
                 return t;
@@ -696,15 +696,15 @@ static Type *parse_type(Parser *p) {
         free(name);
         
         if (entry) {
-            advance(p);  // consume typedef name
+            advance_p(p);  // consume typedef name
             
             // If we have full type info, use it
             if (entry->full_type) {
                 Type *t = type_copy(entry->full_type);
                 
                 // Handle pointer suffix
-                while (check(p, TOKEN_STAR)) {
-                    advance(p);
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
                     Type *ptr = type_pointer(t);
                     t = ptr;
                 }
@@ -722,8 +722,8 @@ static Type *parse_type(Parser *p) {
             }
             
             // Handle additional pointer suffix
-            while (check(p, TOKEN_STAR)) {
-                advance(p);
+            while (check_p(p, TOKEN_STAR)) {
+                advance_p(p);
                 Type *ptr = type_pointer(t);
                 t = ptr;
             }
@@ -741,8 +741,8 @@ static Type *parse_type(Parser *p) {
     t->is_unsigned = is_unsigned;
     
     // Handle pointer suffix
-    while (check(p, TOKEN_STAR)) {
-        advance(p);
+    while (check_p(p, TOKEN_STAR)) {
+        advance_p(p);
         Type *ptr = type_pointer(t);
         // Don't free t - the pointer type now owns it
         t = ptr;
@@ -757,17 +757,17 @@ static ASTNode *parse_parameter(Parser *p) {
     char *param_name = NULL;
     
     // Check for function pointer parameter: Type (*name)(params)
-    if (check(p, TOKEN_LPAREN)) {
-        advance(p);  // consume '('
-        if (check(p, TOKEN_STAR)) {
+    if (check_p(p, TOKEN_LPAREN)) {
+        advance_p(p);  // consume '('
+        if (check_p(p, TOKEN_STAR)) {
             // This is a function pointer: Type (*name)(params)
-            advance(p);  // consume '*'
-            if (check(p, TOKEN_IDENTIFIER)) {
+            advance_p(p);  // consume '*'
+            if (check_p(p, TOKEN_IDENTIFIER)) {
                 param_name = token_name(p);
-                advance(p);  // consume name
+                advance_p(p);  // consume name
             }
-            if (check(p, TOKEN_RPAREN)) {
-                advance(p);  // consume ')'
+            if (check_p(p, TOKEN_RPAREN)) {
+                advance_p(p);  // consume ')'
             }
             
             // Create function pointer type
@@ -778,37 +778,37 @@ static ASTNode *parse_parameter(Parser *p) {
             func_type->is_variadic = false;
             
             // Parse parameter list: (param1, param2, ...)
-            if (check(p, TOKEN_LPAREN)) {
-                advance(p);  // consume '('
+            if (check_p(p, TOKEN_LPAREN)) {
+                advance_p(p);  // consume '('
                 
                 // Parse parameters
                 Type **params = NULL;
                 size_t num_params = 0;
                 size_t param_capacity = 0;
                 
-                while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+                while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
                     Type *p_type = parse_type(p);
                     if (!p_type) {
                         p_type = type_create(TYPE_INT);
                     }
                     
                     // Skip pointer modifiers
-                    while (check(p, TOKEN_STAR)) {
-                        advance(p);
+                    while (check_p(p, TOKEN_STAR)) {
+                        advance_p(p);
                         Type *ptr = type_pointer(p_type);
                         p_type = ptr;
                     }
                     
                     // Skip parameter name if present
-                    if (check(p, TOKEN_IDENTIFIER)) {
-                        advance(p);
+                    if (check_p(p, TOKEN_IDENTIFIER)) {
+                        advance_p(p);
                     }
                     
                     // Skip array brackets if present
-                    while (check(p, TOKEN_LBRACKET)) {
-                        advance(p);
-                        while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) advance(p);
-                        if (check(p, TOKEN_RBRACKET)) advance(p);
+                    while (check_p(p, TOKEN_LBRACKET)) {
+                        advance_p(p);
+                        while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) advance_p(p);
+                        if (check_p(p, TOKEN_RBRACKET)) advance_p(p);
                         Type *ptr = type_pointer(p_type);
                         p_type = ptr;
                     }
@@ -821,28 +821,30 @@ static ASTNode *parse_parameter(Parser *p) {
                     params[num_params++] = p_type;
                     
                     // Skip comma
-                    if (check(p, TOKEN_COMMA)) {
-                        advance(p);
+                    if (check_p(p, TOKEN_COMMA)) {
+                        advance_p(p);
                     }
                 }
                 
-                if (check(p, TOKEN_RPAREN)) {
-                    advance(p);  // consume ')'
+                if (check_p(p, TOKEN_RPAREN)) {
+                    advance_p(p);  // consume ')'
                 }
                 
                 func_type->param_types = params;
                 func_type->num_params = num_params;
             }
             
-            param_type = func_type;
+            // Wrap function type in pointer type (function pointer)
+            Type *fp_type = type_pointer(func_type);
+            param_type = fp_type;
         } else {
             // Just a parenthesized name, put it back
             // Unconsume the '(' - we can't actually do this, so skip to matching ')'
             int depth = 1;
-            while (depth > 0 && !check(p, TOKEN_EOF)) {
-                if (check(p, TOKEN_LPAREN)) depth++;
-                else if (check(p, TOKEN_RPAREN)) depth--;
-                advance(p);
+            while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                if (check_p(p, TOKEN_LPAREN)) depth++;
+                else if (check_p(p, TOKEN_RPAREN)) depth--;
+                advance_p(p);
             }
         }
     }
@@ -852,18 +854,18 @@ static ASTNode *parse_parameter(Parser *p) {
     
     if (param_name) {
         param->data.parameter.name = param_name;
-    } else if (check(p, TOKEN_IDENTIFIER)) {
+    } else if (check_p(p, TOKEN_IDENTIFIER)) {
         param->data.parameter.name = token_name(p);
-        advance(p);
+        advance_p(p);
     } else {
         param->data.parameter.name = xstrdup("");
     }
     
     // Array parameters become pointers
-    while (check(p, TOKEN_LBRACKET)) {
-        advance(p);
-        while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) advance(p);
-        if (check(p, TOKEN_RBRACKET)) advance(p);
+    while (check_p(p, TOKEN_LBRACKET)) {
+        advance_p(p);
+        while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) advance_p(p);
+        if (check_p(p, TOKEN_RBRACKET)) advance_p(p);
         Type *ptr = type_pointer(param_type);
         // Don't free param_type - the pointer type now owns it
         param_type = ptr;
@@ -878,9 +880,9 @@ static ASTNode *parse_function_body(Parser *p) {
     // Already at LBRACE
     ASTNode *node = ast_create(AST_COMPOUND_STMT);
     node->data.compound.stmts = list_create();
-    advance(p); // consume LBRACE
+    advance_p(p); // consume LBRACE
     
-    while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+    while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
         if (is_type(p)) {
             ASTNode *decl = parse_declaration(p);
             // Handle compound statement wrapper for multiple declarators
@@ -901,7 +903,7 @@ static ASTNode *parse_function_body(Parser *p) {
     }
     
     expect(p, TOKEN_RBRACE, "expected '}'");
-    advance(p); // consume RBRACE
+    advance_p(p); // consume RBRACE
     return node;
 }
 
@@ -913,10 +915,10 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
     func->data.function.params = list_create();
     
     // Parse parameters (already consumed '(')
-    while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+    while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
         // Check for variadic argument ...
-        if (check(p, TOKEN_ELLIPSIS)) {
-            advance(p);  // consume ...
+        if (check_p(p, TOKEN_ELLIPSIS)) {
+            advance_p(p);  // consume ...
             // Mark function as variadic
             if (func->data.function.func_type) {
                 func->data.function.func_type->is_variadic = true;
@@ -925,20 +927,20 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
         }
         ASTNode *param = parse_parameter(p);
         list_push(func->data.function.params, param);
-        if (check(p, TOKEN_COMMA)) {
-            advance(p);
+        if (check_p(p, TOKEN_COMMA)) {
+            advance_p(p);
         } else {
             break;
         }
     }
     expect(p, TOKEN_RPAREN, "expected ')'");
-    advance(p); // consume RPAREN
+    advance_p(p); // consume RPAREN
     
     // Skip __attribute__((...)) if present
     skip_attribute(p);
     
     // Check for function body
-    if (check(p, TOKEN_LBRACE)) {
+    if (check_p(p, TOKEN_LBRACE)) {
         func->data.function.body = parse_function_body(p);
     }
     return func;
@@ -947,24 +949,24 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
 // Parse declaration
 static ASTNode *parse_declaration(Parser *p) {
     // Handle storage class specifiers (extern, static)
-    if (check(p, TOKEN_EXTERN)) {
-        advance(p); // consume 'extern'
+    if (check_p(p, TOKEN_EXTERN)) {
+        advance_p(p); // consume 'extern'
         // Parse the type and function name
         Type *base_type = parse_type(p);
         
-        if (check(p, TOKEN_IDENTIFIER)) {
+        if (check_p(p, TOKEN_IDENTIFIER)) {
             char *name = token_name(p);
-            advance(p);
+            advance_p(p);
             
             // Check if it's a function declaration
-            if (check(p, TOKEN_LPAREN)) {
+            if (check_p(p, TOKEN_LPAREN)) {
                 // Skip to matching RPAREN
-                advance(p); // consume '('
+                advance_p(p); // consume '('
                 int depth = 1;
-                while (depth > 0 && !check(p, TOKEN_EOF)) {
-                    if (check(p, TOKEN_LPAREN)) depth++;
-                    else if (check(p, TOKEN_RPAREN)) depth--;
-                    advance(p);
+                while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                    if (check_p(p, TOKEN_LPAREN)) depth++;
+                    else if (check_p(p, TOKEN_RPAREN)) depth--;
+                    advance_p(p);
                 }
             }
             
@@ -974,22 +976,22 @@ static ASTNode *parse_declaration(Parser *p) {
         type_free(base_type);
         
         // Skip to semicolon
-        while (!check(p, TOKEN_SEMICOLON) && !check(p, TOKEN_EOF)) {
-            advance(p);
+        while (!check_p(p, TOKEN_SEMICOLON) && !check_p(p, TOKEN_EOF)) {
+            advance_p(p);
         }
-        if (check(p, TOKEN_SEMICOLON)) advance(p);
+        if (check_p(p, TOKEN_SEMICOLON)) advance_p(p);
         return ast_create(AST_NULL_STMT);
     }
     
     // Handle static keyword
-    if (check(p, TOKEN_STATIC)) {
-        advance(p); // consume 'static'
+    if (check_p(p, TOKEN_STATIC)) {
+        advance_p(p); // consume 'static'
         // Continue parsing the declaration after 'static'
     }
     
     // Handle typedef
-    if (check(p, TOKEN_TYPEDEF)) {
-        advance(p);  // consume 'typedef'
+    if (check_p(p, TOKEN_TYPEDEF)) {
+        advance_p(p);  // consume 'typedef'
         // Parse the underlying type
         Type *base_type = parse_type(p);
         
@@ -997,44 +999,44 @@ static ASTNode *parse_declaration(Parser *p) {
         // Or regular typedef: typedef int name;
         char *typedef_name = NULL;
         
-        if (check(p, TOKEN_LPAREN)) {
+        if (check_p(p, TOKEN_LPAREN)) {
             // Could be function pointer: (*name)(params)
-            advance(p);  // consume '('
-            if (check(p, TOKEN_STAR)) {
-                advance(p);  // consume '*'
-                if (check(p, TOKEN_IDENTIFIER)) {
+            advance_p(p);  // consume '('
+            if (check_p(p, TOKEN_STAR)) {
+                advance_p(p);  // consume '*'
+                if (check_p(p, TOKEN_IDENTIFIER)) {
                     typedef_name = token_name(p);
-                    advance(p);  // consume name
+                    advance_p(p);  // consume name
                 }
                 // Skip to matching ')'
-                if (check(p, TOKEN_RPAREN)) advance(p);  // consume ')'
+                if (check_p(p, TOKEN_RPAREN)) advance_p(p);  // consume ')'
                 // Skip function params: (params)
-                if (check(p, TOKEN_LPAREN)) {
-                    advance(p);  // consume '('
+                if (check_p(p, TOKEN_LPAREN)) {
+                    advance_p(p);  // consume '('
                     int depth = 1;
-                    while (depth > 0 && !check(p, TOKEN_EOF)) {
-                        if (check(p, TOKEN_LPAREN)) depth++;
-                        else if (check(p, TOKEN_RPAREN)) depth--;
-                        advance(p);
+                    while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                        if (check_p(p, TOKEN_LPAREN)) depth++;
+                        else if (check_p(p, TOKEN_RPAREN)) depth--;
+                        advance_p(p);
                     }
                 }
             } else {
                 // Regular parenthesized declarator - skip to find name
                 int depth = 1;
-                while (depth > 0 && !check(p, TOKEN_EOF)) {
-                    if (check(p, TOKEN_LPAREN)) depth++;
-                    else if (check(p, TOKEN_RPAREN)) depth--;
-                    else if (check(p, TOKEN_IDENTIFIER) && depth == 1) {
+                while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                    if (check_p(p, TOKEN_LPAREN)) depth++;
+                    else if (check_p(p, TOKEN_RPAREN)) depth--;
+                    else if (check_p(p, TOKEN_IDENTIFIER) && depth == 1) {
                         if (!typedef_name) {
                             typedef_name = token_name(p);
                         }
                     }
-                    advance(p);
+                    advance_p(p);
                 }
             }
-        } else if (check(p, TOKEN_IDENTIFIER)) {
+        } else if (check_p(p, TOKEN_IDENTIFIER)) {
             typedef_name = token_name(p);
-            advance(p);
+            advance_p(p);
         }
         
         if (typedef_name) {
@@ -1046,7 +1048,7 @@ static ASTNode *parse_declaration(Parser *p) {
         // Don't free base_type - it's now stored in the typedef entry
         
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p);
+        advance_p(p);
         return ast_create(AST_TYPEDEF_DECL);
     }
     
@@ -1058,10 +1060,137 @@ static ASTNode *parse_declaration(Parser *p) {
     
     // Get identifier
     char *name = NULL;
-    if (check(p, TOKEN_IDENTIFIER)) {
+    
+    // Check for function pointer declarator: (*name)(params) or *name(params)
+    // This must be checked BEFORE looking for a simple identifier
+    if (check_p(p, TOKEN_LPAREN)) {
+        // Might be a function pointer: (*name)(params)
+        // Save position and try to parse it
+        size_t saved_pos = p->lexer->position;
+        int saved_line = p->lexer->line;
+        int saved_col = p->lexer->column;
+        Token saved_previous = p->previous;
+        Token saved_current = p->current;
+        
+        advance_p(p); // consume '('
+        
+        if (check_p(p, TOKEN_STAR)) {
+            // This is a function pointer: (*name)(params)
+            advance_p(p); // consume '*'
+            if (check_p(p, TOKEN_IDENTIFIER)) {
+                name = token_name(p);
+                advance_p(p); // consume name
+                
+                // Expect ')' followed by '(' for parameter list
+                if (check_p(p, TOKEN_RPAREN)) {
+                    advance_p(p); // consume ')'
+                    // We've consumed (*name) - now we have the function pointer type
+                    // Create the function type with base_type as return type
+                    Type *func_type = type_create(TYPE_FUNCTION);
+                    func_type->return_type = base_type;
+                    func_type->param_types = NULL;
+                    func_type->num_params = 0;
+                    func_type->is_variadic = false;
+                    
+                    // Parse parameter list if present: (params)
+                    if (check_p(p, TOKEN_LPAREN)) {
+                        advance_p(p); // consume '('
+                        
+                        // Parse parameters
+                        Type **params = NULL;
+                        size_t num_params = 0;
+                        size_t param_capacity = 0;
+                        
+                        while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
+                            // Skip ellipsis for now
+                            if (check_p(p, TOKEN_ELLIPSIS)) {
+                                func_type->is_variadic = true;
+                                advance_p(p);
+                                break;
+                            }
+                            
+                            Type *p_type = parse_type(p);
+                            if (!p_type) {
+                                p_type = type_create(TYPE_INT);
+                            }
+                            
+                            // Skip pointer modifiers
+                            while (check_p(p, TOKEN_STAR)) {
+                                advance_p(p);
+                                Type *ptr = type_pointer(p_type);
+                                p_type = ptr;
+                            }
+                            
+                            // Skip parameter name if present (for abstract declarators)
+                            if (check_p(p, TOKEN_IDENTIFIER)) {
+                                advance_p(p);
+                            }
+                            
+                            // Skip array brackets
+                            while (check_p(p, TOKEN_LBRACKET)) {
+                                advance_p(p);
+                                while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) advance_p(p);
+                                if (check_p(p, TOKEN_RBRACKET)) advance_p(p);
+                                Type *ptr = type_pointer(p_type);
+                                p_type = ptr;
+                            }
+                            
+                            // Add to parameter list
+                            if (num_params >= param_capacity) {
+                                param_capacity = param_capacity ? param_capacity * 2 : 4;
+                                params = realloc(params, sizeof(Type*) * param_capacity);
+                            }
+                            params[num_params++] = p_type;
+                            
+                            if (check_p(p, TOKEN_COMMA)) {
+                                advance_p(p);
+                            }
+                        }
+                        
+                        if (check_p(p, TOKEN_RPAREN)) {
+                            advance_p(p); // consume ')'
+                        }
+                        
+                        func_type->param_types = params;
+                        func_type->num_params = num_params;
+                    }
+                    
+                    // Function pointer type is complete
+                    // This is a variable declaration with function pointer type
+                    // Check for initializer or semicolon
+                    ASTNode *decl = ast_create(AST_VARIABLE_DECL);
+                    decl->data.variable.var_type = func_type;
+                    decl->data.variable.name = name;
+                    decl->data.variable.init = NULL;
+                    
+                    // Initializer
+                    if (check_p(p, TOKEN_ASSIGN)) {
+                        advance_p(p);
+                        decl->data.variable.init = parse_assignment_expr(p);
+                    }
+                    
+                    // Expect semicolon
+                    expect(p, TOKEN_SEMICOLON, "expected ';'");
+                    advance_p(p);
+                    
+                    return decl;
+                }
+            }
+        }
+        
+        // Not a function pointer - restore position
+        p->lexer->position = saved_pos;
+        p->lexer->line = saved_line;
+        p->lexer->column = saved_col;
+        p->previous = saved_previous;
+        p->current = saved_current;
+    }
+    
+    // Check for simple identifier
+    if (check_p(p, TOKEN_IDENTIFIER)) {
         // Use token length to copy exactly the right number of characters
         name = token_name(p);
-        advance(p);
+        advance_p(p);
     } else {
         name = xstrdup("");
     }
@@ -1070,21 +1199,21 @@ static ASTNode *parse_declaration(Parser *p) {
     skip_attribute(p);
     
     // Check for function definition
-    if (check(p, TOKEN_LPAREN)) {
-        advance(p); // consume '('
+    if (check_p(p, TOKEN_LPAREN)) {
+        advance_p(p); // consume '('
         ASTNode *func = parse_function_definition(p, base_type, name);
         free(name);
         return func;
     }
     
     // Handle array declarator: int arr[5]
-    while (check(p, TOKEN_LBRACKET)) {
-        advance(p);  // consume '['
+    while (check_p(p, TOKEN_LBRACKET)) {
+        advance_p(p);  // consume '['
         // Skip the array size expression (we don't support it yet, just skip to ']')
-        while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) {
-            advance(p);
+        while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) {
+            advance_p(p);
         }
-        if (check(p, TOKEN_RBRACKET)) advance(p);  // consume ']'
+        if (check_p(p, TOKEN_RBRACKET)) advance_p(p);  // consume ']'
         // Convert to pointer type
         Type *ptr = type_pointer(base_type);
         base_type = ptr;
@@ -1097,31 +1226,31 @@ static ASTNode *parse_declaration(Parser *p) {
     decl->data.variable.init = NULL;
     
     // Initializer
-    if (check(p, TOKEN_ASSIGN)) {
-        advance(p);
-        if (check(p, TOKEN_LBRACE)) {
+    if (check_p(p, TOKEN_ASSIGN)) {
+        advance_p(p);
+        if (check_p(p, TOKEN_LBRACE)) {
             // Parse initializer list: { expr1, expr2, ... }
-            advance(p);  // consume '{'
+            advance_p(p);  // consume '{'
             ASTNode *init_list = ast_create(AST_INITIALIZER_LIST);
             init_list->data.init_list.elements = list_create();
-            while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
                 // Parse an element (could be a nested initializer list)
-                if (check(p, TOKEN_LBRACE)) {
+                if (check_p(p, TOKEN_LBRACE)) {
                     // Nested initializer - for now, skip it
-                    advance(p);  // consume '{'
+                    advance_p(p);  // consume '{'
                     int depth = 1;
-                    while (depth > 0 && !check(p, TOKEN_EOF)) {
-                        if (check(p, TOKEN_LBRACE)) depth++;
-                        else if (check(p, TOKEN_RBRACE)) depth--;
-                        advance(p);
+                    while (depth > 0 && !check_p(p, TOKEN_EOF)) {
+                        if (check_p(p, TOKEN_LBRACE)) depth++;
+                        else if (check_p(p, TOKEN_RBRACE)) depth--;
+                        advance_p(p);
                     }
                 } else {
                     ASTNode *elem = parse_assignment_expr(p);
                     if (elem) list_push(init_list->data.init_list.elements, elem);
                 }
-                if (check(p, TOKEN_COMMA)) advance(p);
+                if (check_p(p, TOKEN_COMMA)) advance_p(p);
             }
-            if (check(p, TOKEN_RBRACE)) advance(p);  // consume '}'
+            if (check_p(p, TOKEN_RBRACE)) advance_p(p);  // consume '}'
             decl->data.variable.init = init_list;
             
             // Set array size from initializer count if this is an array
@@ -1139,42 +1268,42 @@ static ASTNode *parse_declaration(Parser *p) {
     
     // Handle multiple declarators: int a, b, c;
     // Check for comma before semicolon
-    if (check(p, TOKEN_COMMA)) {
+    if (check_p(p, TOKEN_COMMA)) {
         // Create a compound statement to hold multiple declarations
         ASTNode *compound = ast_create(AST_COMPOUND_STMT);
         compound->data.compound.stmts = list_create();
         list_push(compound->data.compound.stmts, decl);
         
-        while (check(p, TOKEN_COMMA)) {
-            advance(p);  // consume ','
+        while (check_p(p, TOKEN_COMMA)) {
+            advance_p(p);  // consume ','
             
             // Parse next declarator - handle pointer declarator
             Type *next_type = type_copy(base_type);
             
             // Handle pointer declarator(s) for subsequent variables
-            while (check(p, TOKEN_STAR)) {
-                advance(p);  // consume '*'
+            while (check_p(p, TOKEN_STAR)) {
+                advance_p(p);  // consume '*'
                 Type *ptr = type_pointer(next_type);
                 next_type = ptr;
             }
             
             // Parse name
             char *next_name = NULL;
-            if (check(p, TOKEN_IDENTIFIER)) {
+            if (check_p(p, TOKEN_IDENTIFIER)) {
                 next_name = token_name(p);
-                advance(p);
+                advance_p(p);
             } else {
                 next_name = xstrdup("");
             }
             
             // Handle array declarator for subsequent variables
-            while (check(p, TOKEN_LBRACKET)) {
-                advance(p);  // consume '['
+            while (check_p(p, TOKEN_LBRACKET)) {
+                advance_p(p);  // consume '['
                 // Skip the array size expression
-                while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) {
-                    advance(p);
+                while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) {
+                    advance_p(p);
                 }
-                if (check(p, TOKEN_RBRACKET)) advance(p);  // consume ']'
+                if (check_p(p, TOKEN_RBRACKET)) advance_p(p);  // consume ']'
                 // Convert to pointer type
                 Type *ptr = type_pointer(next_type);
                 next_type = ptr;
@@ -1190,8 +1319,8 @@ static ASTNode *parse_declaration(Parser *p) {
             next_decl->data.variable.init = NULL;
             
             // Handle initializer
-            if (check(p, TOKEN_ASSIGN)) {
-                advance(p);
+            if (check_p(p, TOKEN_ASSIGN)) {
+                advance_p(p);
                 next_decl->data.variable.init = parse_assignment_expr(p);
             }
             
@@ -1199,22 +1328,22 @@ static ASTNode *parse_declaration(Parser *p) {
         }
         
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p); // consume SEMICOLON
+        advance_p(p); // consume SEMICOLON
         
         return compound;
     }
 
     expect(p, TOKEN_SEMICOLON, "expected ';'");
-    advance(p); // consume SEMICOLON
+    advance_p(p); // consume SEMICOLON
     return decl;
 }
 
 static ASTNode *parse_statement(Parser *p) {
-    if (check(p, TOKEN_LBRACE)) {
+    if (check_p(p, TOKEN_LBRACE)) {
         ASTNode *node = ast_create(AST_COMPOUND_STMT);
         node->data.compound.stmts = list_create();
-        advance(p); // consume LBRACE
-        while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+        advance_p(p); // consume LBRACE
+        while (!check_p(p, TOKEN_RBRACE) && !check_p(p, TOKEN_EOF)) {
             if (is_type(p)) {
                 ASTNode *decl = parse_declaration(p);
                 // Handle compound statement wrapper for multiple declarators
@@ -1234,126 +1363,126 @@ static ASTNode *parse_statement(Parser *p) {
             }
         }
         expect(p, TOKEN_RBRACE, "expected '}'");
-        advance(p); // consume RBRACE
+        advance_p(p); // consume RBRACE
         return node;
     }
     
-    if (check(p, TOKEN_IF)) {
-        advance(p); // consume IF
+    if (check_p(p, TOKEN_IF)) {
+        advance_p(p); // consume IF
         expect(p, TOKEN_LPAREN, "expected '('");
-        advance(p); // consume '('
+        advance_p(p); // consume '('
         ASTNode *node = ast_create(AST_IF_STMT);
         node->data.if_stmt.condition = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p); // consume ')'
+        advance_p(p); // consume ')'
         node->data.if_stmt.then_stmt = parse_statement(p);
-        if (check(p, TOKEN_ELSE)) {
-            advance(p); // consume ELSE
+        if (check_p(p, TOKEN_ELSE)) {
+            advance_p(p); // consume ELSE
             node->data.if_stmt.else_stmt = parse_statement(p);
         }
         return node;
     }
     
-    if (check(p, TOKEN_WHILE)) {
-        advance(p); // consume WHILE
+    if (check_p(p, TOKEN_WHILE)) {
+        advance_p(p); // consume WHILE
         expect(p, TOKEN_LPAREN, "expected '('");
-        advance(p); // consume '('
+        advance_p(p); // consume '('
         ASTNode *node = ast_create(AST_WHILE_STMT);
         node->data.while_stmt.condition = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p); // consume ')'
+        advance_p(p); // consume ')'
         node->data.while_stmt.body = parse_statement(p);
         return node;
     }
     
-    if (check(p, TOKEN_FOR)) {
-        advance(p); // consume FOR
+    if (check_p(p, TOKEN_FOR)) {
+        advance_p(p); // consume FOR
         expect(p, TOKEN_LPAREN, "expected '('");
-        advance(p); // consume '('
+        advance_p(p); // consume '('
         ASTNode *node = ast_create(AST_FOR_STMT);
         bool is_decl = is_type(p);
-        if (!check(p, TOKEN_SEMICOLON))
+        if (!check_p(p, TOKEN_SEMICOLON))
             node->data.for_stmt.init = is_decl ? parse_declaration(p) : parse_expression(p);
         // If init was an expression, consume the semicolon. Declarations already consume it.
-        if (!is_decl || check(p, TOKEN_SEMICOLON)) {
+        if (!is_decl || check_p(p, TOKEN_SEMICOLON)) {
             expect(p, TOKEN_SEMICOLON, "expected ';'");
-            advance(p); // consume ';'
+            advance_p(p); // consume ';'
         }
-        if (!check(p, TOKEN_SEMICOLON))
+        if (!check_p(p, TOKEN_SEMICOLON))
             node->data.for_stmt.condition = parse_expression(p);
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p); // consume ';'
-        if (!check(p, TOKEN_RPAREN))
+        advance_p(p); // consume ';'
+        if (!check_p(p, TOKEN_RPAREN))
             node->data.for_stmt.increment = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p); // consume ')'
+        advance_p(p); // consume ')'
         node->data.for_stmt.body = parse_statement(p);
         return node;
     }
     
-    if (check(p, TOKEN_SWITCH)) {
-        advance(p); // consume SWITCH
+    if (check_p(p, TOKEN_SWITCH)) {
+        advance_p(p); // consume SWITCH
         expect(p, TOKEN_LPAREN, "expected '('");
-        advance(p); // consume '('
+        advance_p(p); // consume '('
         ASTNode *node = ast_create(AST_SWITCH_STMT);
         node->data.switch_stmt.expr = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p); // consume ')'
+        advance_p(p); // consume ')'
         node->data.switch_stmt.body = parse_statement(p);
         return node;
     }
     
-    if (check(p, TOKEN_RETURN)) {
-        advance(p); // consume RETURN
+    if (check_p(p, TOKEN_RETURN)) {
+        advance_p(p); // consume RETURN
         ASTNode *node = ast_create(AST_RETURN_STMT);
-        if (!check(p, TOKEN_SEMICOLON))
+        if (!check_p(p, TOKEN_SEMICOLON))
             node->data.return_stmt.expr = parse_expression(p);
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p); // consume ';'
+        advance_p(p); // consume ';'
         return node;
     }
     
-    if (check(p, TOKEN_BREAK)) {
-        advance(p); // consume BREAK
+    if (check_p(p, TOKEN_BREAK)) {
+        advance_p(p); // consume BREAK
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p); // consume ';'
+        advance_p(p); // consume ';'
         return ast_create(AST_BREAK_STMT);
     }
     
-    if (check(p, TOKEN_CONTINUE)) {
-        advance(p); // consume CONTINUE
+    if (check_p(p, TOKEN_CONTINUE)) {
+        advance_p(p); // consume CONTINUE
         expect(p, TOKEN_SEMICOLON, "expected ';'");
-        advance(p); // consume ';'
+        advance_p(p); // consume ';'
         return ast_create(AST_CONTINUE_STMT);
     }
     
-    if (check(p, TOKEN_CASE)) {
-        advance(p); // consume CASE
+    if (check_p(p, TOKEN_CASE)) {
+        advance_p(p); // consume CASE
         ASTNode *node = ast_create(AST_CASE_STMT);
         node->data.case_stmt.case_expr = parse_expression(p);
         expect(p, TOKEN_COLON, "expected ':'");
-        advance(p); // consume ':'
+        advance_p(p); // consume ':'
         node->data.case_stmt.stmt = parse_statement(p);
         return node;
     }
     
-    if (check(p, TOKEN_DEFAULT)) {
-        advance(p); // consume DEFAULT
+    if (check_p(p, TOKEN_DEFAULT)) {
+        advance_p(p); // consume DEFAULT
         expect(p, TOKEN_COLON, "expected ':'");
-        advance(p); // consume ':'
+        advance_p(p); // consume ':'
         ASTNode *node = ast_create(AST_DEFAULT_STMT);
         node->data.default_stmt.stmt = parse_statement(p);
         return node;
     }
     
-    if (check(p, TOKEN_SEMICOLON)) {
-        advance(p); // consume ';'
+    if (check_p(p, TOKEN_SEMICOLON)) {
+        advance_p(p); // consume ';'
         return ast_create(AST_NULL_STMT);
     }
     
     ASTNode *expr = parse_expression(p);
     expect(p, TOKEN_SEMICOLON, "expected ';'");
-    advance(p); // consume ';'
+    advance_p(p); // consume ';'
     ASTNode *stmt = ast_create(AST_EXPRESSION_STMT);
     stmt->data.expr_stmt.expr = expr;
     return stmt;
@@ -1363,8 +1492,8 @@ static ASTNode *parse_expression(Parser *p) {
     ASTNode *left = parse_assignment_expr(p);
     
     // Handle comma operator (lowest precedence)
-    while (check(p, TOKEN_COMMA)) {
-        advance(p);  // consume ','
+    while (check_p(p, TOKEN_COMMA)) {
+        advance_p(p);  // consume ','
         ASTNode *right = parse_assignment_expr(p);
         ASTNode *comma = ast_create(AST_COMMA_EXPR);
         comma->data.comma.left = left;
@@ -1378,88 +1507,88 @@ static ASTNode *parse_expression(Parser *p) {
 static ASTNode *parse_assignment_expr(Parser *p) {
     ASTNode *left = parse_conditional_expr(p);
     
-    if (check(p, TOKEN_ASSIGN)) {
-        advance(p);
+    if (check_p(p, TOKEN_ASSIGN)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = -1;  // Plain assignment (0 is OP_ADD)
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_PLUS_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_PLUS_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_ADD;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_MINUS_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_MINUS_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_SUB;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_STAR_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_STAR_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_MUL;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_SLASH_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_SLASH_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_DIV;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_PERCENT_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_PERCENT_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_MOD;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_LSHIFT_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_LSHIFT_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_LSHIFT;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_RSHIFT_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_RSHIFT_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_RSHIFT;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_AMP_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_AMP_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_BITAND;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_PIPE_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_PIPE_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_BITOR;
         node->data.assignment.left = left;
         node->data.assignment.right = parse_assignment_expr(p);
         return node;
     }
-    if (check(p, TOKEN_CARET_EQ)) {
-        advance(p);
+    if (check_p(p, TOKEN_CARET_EQ)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_ASSIGNMENT_EXPR);
         node->data.assignment.op = OP_BITXOR;
         node->data.assignment.left = left;
@@ -1473,13 +1602,13 @@ static ASTNode *parse_assignment_expr(Parser *p) {
 static ASTNode *parse_conditional_expr(Parser *p) {
     ASTNode *cond = parse_binary_expr(p, 0);
     
-    if (check(p, TOKEN_QUESTION)) {
-        advance(p);
+    if (check_p(p, TOKEN_QUESTION)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_CONDITIONAL_EXPR);
         node->data.conditional.condition = cond;
         node->data.conditional.then_expr = parse_expression(p);
         expect(p, TOKEN_COLON, "expected ':'");
-        advance(p);
+        advance_p(p);
         node->data.conditional.else_expr = parse_conditional_expr(p);
         return node;
     }
@@ -1530,10 +1659,10 @@ static BinaryOp binop(TokenType t) {
 static ASTNode *parse_binary_expr(Parser *p, int min_prec) {
     ASTNode *left = parse_cast_expr(p);
     
-    while (prec(peek(p)) >= min_prec) {
-        BinaryOp op = binop(peek(p));
-        int assoc_prec = prec(peek(p));
-        advance(p);
+    while (prec(peek_p(p)) >= min_prec) {
+        BinaryOp op = binop(peek_p(p));
+        int assoc_prec = prec(peek_p(p));
+        advance_p(p);
         
         ASTNode *node = ast_create(AST_BINARY_EXPR);
         node->data.binary.op = op;
@@ -1547,16 +1676,16 @@ static ASTNode *parse_binary_expr(Parser *p, int min_prec) {
 
 static ASTNode *parse_cast_expr(Parser *p) {
     // Check for cast expression: (type)expr
-    if (check(p, TOKEN_LPAREN)) {
+    if (check_p(p, TOKEN_LPAREN)) {
         // Peek ahead to see if this looks like a cast
         // A cast has (type) where type is a type keyword or typedef name
-        advance(p); // consume '('
+        advance_p(p); // consume '('
         
         if (is_type(p)) {
             // This is a cast expression
             Type *t = parse_type(p);
             expect(p, TOKEN_RPAREN, "expected ')' after type in cast");
-            advance(p); // consume ')'
+            advance_p(p); // consume ')'
             ASTNode *node = ast_create(AST_CAST_EXPR);
             node->data.cast.cast_type = t;
             node->data.cast.operand = parse_cast_expr(p);
@@ -1567,7 +1696,7 @@ static ASTNode *parse_cast_expr(Parser *p) {
         // We already consumed '(', so parse the expression inside
         ASTNode *expr = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p); // consume ')'
+        advance_p(p); // consume ')'
         // After a parenthesized expression, we need to check for postfix operators
         // Call parse_postfix_expr to handle ->, ., [], etc.
         return parse_postfix_expr_with_expr(p, expr);
@@ -1577,26 +1706,26 @@ static ASTNode *parse_cast_expr(Parser *p) {
 
 static ASTNode *parse_unary_expr(Parser *p) {
     // Handle sizeof
-    if (check(p, TOKEN_SIZEOF)) {
-        advance(p);  // consume 'sizeof'
+    if (check_p(p, TOKEN_SIZEOF)) {
+        advance_p(p);  // consume 'sizeof'
         ASTNode *node = ast_create(AST_SIZEOF_EXPR);
         
-        if (check(p, TOKEN_LPAREN)) {
+        if (check_p(p, TOKEN_LPAREN)) {
             // Could be sizeof(type) or sizeof(expr)
-            advance(p);  // consume '('
+            advance_p(p);  // consume '('
             if (is_type(p)) {
                 // sizeof(type)
                 Type *t = parse_type(p);
                 node->data.sizeof_expr.sizeof_type = t;
                 node->data.sizeof_expr.sizeof_expr = NULL;
                 expect(p, TOKEN_RPAREN, "expected ')' after type in sizeof");
-                advance(p);  // consume ')'
+                advance_p(p);  // consume ')'
             } else {
                 // sizeof(expr)
                 node->data.sizeof_expr.sizeof_type = NULL;
                 node->data.sizeof_expr.sizeof_expr = parse_expression(p);
                 expect(p, TOKEN_RPAREN, "expected ')' after expression in sizeof");
-                advance(p);  // consume ')'
+                advance_p(p);  // consume ')'
             }
         } else {
             // sizeof expr without parens
@@ -1606,57 +1735,57 @@ static ASTNode *parse_unary_expr(Parser *p) {
         return node;
     }
     
-    if (check(p, TOKEN_PLUS_PLUS)) {
-        advance(p);
+    if (check_p(p, TOKEN_PLUS_PLUS)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 0;
         node->data.unary.operand = parse_unary_expr(p);
         return node;
     }
-    if (check(p, TOKEN_MINUS_MINUS)) {
-        advance(p);
+    if (check_p(p, TOKEN_MINUS_MINUS)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 1;
         node->data.unary.operand = parse_unary_expr(p);
         return node;
     }
-    if (check(p, TOKEN_STAR)) {
-        advance(p);
+    if (check_p(p, TOKEN_STAR)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 4;
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
-    if (check(p, TOKEN_AMPERSAND)) {
-        advance(p);
+    if (check_p(p, TOKEN_AMPERSAND)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 5;
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
-    if (check(p, TOKEN_MINUS)) {
-        advance(p);
+    if (check_p(p, TOKEN_MINUS)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 1;  // Unary minus
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
-    if (check(p, TOKEN_PLUS)) {
-        advance(p);
+    if (check_p(p, TOKEN_PLUS)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 0;  // Unary plus
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
-    if (check(p, TOKEN_EXCLAIM)) {
-        advance(p);
+    if (check_p(p, TOKEN_EXCLAIM)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 2;
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
-    if (check(p, TOKEN_TILDE)) {
-        advance(p);
+    if (check_p(p, TOKEN_TILDE)) {
+        advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
         node->data.unary.op = 3;
         node->data.unary.operand = parse_postfix_expr(p);
@@ -1668,58 +1797,58 @@ static ASTNode *parse_unary_expr(Parser *p) {
 // Helper function: continue parsing postfix operators on an already-parsed expression
 static ASTNode *parse_postfix_expr_with_expr(Parser *p, ASTNode *expr) {
     while (true) {
-        if (check(p, TOKEN_LBRACKET)) {
-            advance(p);
+        if (check_p(p, TOKEN_LBRACKET)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_ARRAY_SUBSCRIPT_EXPR);
             node->data.subscript.array = expr;
             node->data.subscript.index = parse_expression(p);
             expect(p, TOKEN_RBRACKET, "expected ']'");
-            advance(p);
+            advance_p(p);
             expr = node;
         }
-        else if (check(p, TOKEN_LPAREN)) {
-            advance(p);
+        else if (check_p(p, TOKEN_LPAREN)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_CALL_EXPR);
             node->data.call.callee = expr;
             node->data.call.args = list_create();
-            while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
                 list_push(node->data.call.args, parse_assignment_expr(p));
-                if (check(p, TOKEN_COMMA)) advance(p);
+                if (check_p(p, TOKEN_COMMA)) advance_p(p);
                 else break;
             }
             expect(p, TOKEN_RPAREN, "expected ')'");
-            advance(p);
+            advance_p(p);
             expr = node;
         }
-        else if (check(p, TOKEN_DOT)) {
-            advance(p);
+        else if (check_p(p, TOKEN_DOT)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_MEMBER_ACCESS_EXPR);
             node->data.member.expr = expr;
             expect(p, TOKEN_IDENTIFIER, "expected member name");
             node->data.member.member = token_name(p);
-            advance(p);
+            advance_p(p);
             node->data.member.is_arrow = false;
             expr = node;
         }
-        else if (check(p, TOKEN_ARROW)) {
-            advance(p);
+        else if (check_p(p, TOKEN_ARROW)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_POINTER_MEMBER_ACCESS_EXPR);
             node->data.member.expr = expr;
             expect(p, TOKEN_IDENTIFIER, "expected member name");
             node->data.member.member = token_name(p);
-            advance(p);
+            advance_p(p);
             node->data.member.is_arrow = true;
             expr = node;
         }
-        else if (check(p, TOKEN_PLUS_PLUS)) {
-            advance(p);
+        else if (check_p(p, TOKEN_PLUS_PLUS)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_UNARY_EXPR);
             node->data.unary.op = 6;
             node->data.unary.operand = expr;
             expr = node;
         }
-        else if (check(p, TOKEN_MINUS_MINUS)) {
-            advance(p);
+        else if (check_p(p, TOKEN_MINUS_MINUS)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_UNARY_EXPR);
             node->data.unary.op = 7;
             node->data.unary.operand = expr;
@@ -1735,58 +1864,58 @@ static ASTNode *parse_postfix_expr(Parser *p) {
     ASTNode *expr = parse_primary_expr(p);
     
     while (true) {
-        if (check(p, TOKEN_LBRACKET)) {
-            advance(p);
+        if (check_p(p, TOKEN_LBRACKET)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_ARRAY_SUBSCRIPT_EXPR);
             node->data.subscript.array = expr;
             node->data.subscript.index = parse_expression(p);
             expect(p, TOKEN_RBRACKET, "expected ']'");
-            advance(p);
+            advance_p(p);
             expr = node;
         }
-        else if (check(p, TOKEN_LPAREN)) {
-            advance(p);
+        else if (check_p(p, TOKEN_LPAREN)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_CALL_EXPR);
             node->data.call.callee = expr;
             node->data.call.args = list_create();
-            while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+            while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
                 list_push(node->data.call.args, parse_assignment_expr(p));
-                if (check(p, TOKEN_COMMA)) advance(p);
+                if (check_p(p, TOKEN_COMMA)) advance_p(p);
                 else break;
             }
             expect(p, TOKEN_RPAREN, "expected ')'");
-            advance(p);
+            advance_p(p);
             expr = node;
         }
-        else if (check(p, TOKEN_DOT)) {
-            advance(p);
+        else if (check_p(p, TOKEN_DOT)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_MEMBER_ACCESS_EXPR);
             node->data.member.expr = expr;
             expect(p, TOKEN_IDENTIFIER, "expected member name");
             node->data.member.member = token_name(p);
-            advance(p);
+            advance_p(p);
             node->data.member.is_arrow = false;
             expr = node;
         }
-        else if (check(p, TOKEN_ARROW)) {
-            advance(p);
+        else if (check_p(p, TOKEN_ARROW)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_POINTER_MEMBER_ACCESS_EXPR);
             node->data.member.expr = expr;
             expect(p, TOKEN_IDENTIFIER, "expected member name");
             node->data.member.member = token_name(p);
-            advance(p);
+            advance_p(p);
             node->data.member.is_arrow = true;
             expr = node;
         }
-        else if (check(p, TOKEN_PLUS_PLUS)) {
-            advance(p);
+        else if (check_p(p, TOKEN_PLUS_PLUS)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_UNARY_EXPR);
             node->data.unary.op = 6;
             node->data.unary.operand = expr;
             expr = node;
         }
-        else if (check(p, TOKEN_MINUS_MINUS)) {
-            advance(p);
+        else if (check_p(p, TOKEN_MINUS_MINUS)) {
+            advance_p(p);
             ASTNode *node = ast_create(AST_UNARY_EXPR);
             node->data.unary.op = 7;
             node->data.unary.operand = expr;
@@ -1799,13 +1928,13 @@ static ASTNode *parse_postfix_expr(Parser *p) {
 }
 
 static ASTNode *parse_primary_expr(Parser *p) {
-    if (check(p, TOKEN_IDENTIFIER)) {
+    if (check_p(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         
         // Check if this is NULL
         if (strcmp(name, "NULL") == 0) {
             free(name);
-            advance(p);
+            advance_p(p);
             // NULL is the null pointer constant - treat as integer 0
             ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
             node->data.int_literal.value = 0;
@@ -1816,7 +1945,7 @@ static ASTNode *parse_primary_expr(Parser *p) {
         EnumConstant *ec = find_enum_constant(name);
         if (ec) {
             free(name);
-            advance(p);
+            advance_p(p);
             ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
             node->data.int_literal.value = ec->value;
             return node;
@@ -1825,14 +1954,14 @@ static ASTNode *parse_primary_expr(Parser *p) {
         // Check if this is a builtin constant (true, false)
         if (strcmp(name, "true") == 0) {
             free(name);
-            advance(p);
+            advance_p(p);
             ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
             node->data.int_literal.value = 1;
             return node;
         }
         if (strcmp(name, "false") == 0) {
             free(name);
-            advance(p);
+            advance_p(p);
             ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
             node->data.int_literal.value = 0;
             return node;
@@ -1841,7 +1970,7 @@ static ASTNode *parse_primary_expr(Parser *p) {
         // Check for stdin, stdout, stderr - treat as null for now
         if (strcmp(name, "stdin") == 0 || strcmp(name, "stdout") == 0 || strcmp(name, "stderr") == 0) {
             free(name);
-            advance(p);
+            advance_p(p);
             // These are FILE* which we model as void*
             ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
             node->data.int_literal.value = 0;  // Treat as null pointer
@@ -1851,43 +1980,43 @@ static ASTNode *parse_primary_expr(Parser *p) {
         // Regular identifier
         ASTNode *node = ast_create(AST_IDENTIFIER_EXPR);
         node->data.identifier.name = name;
-        advance(p);
+        advance_p(p);
         return node;
     }
     
-    if (check(p, TOKEN_INT_CONSTANT) || check(p, TOKEN_NUMBER)) {
+    if (check_p(p, TOKEN_INT_CONSTANT) || check_p(p, TOKEN_NUMBER)) {
         ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
         node->data.int_literal.value = p->current.value.int_val;
-        advance(p);
+        advance_p(p);
         return node;
     }
     
-    if (check(p, TOKEN_FLOAT_CONSTANT)) {
+    if (check_p(p, TOKEN_FLOAT_CONSTANT)) {
         ASTNode *node = ast_create(AST_FLOAT_LITERAL_EXPR);
         node->data.float_literal.value = p->current.value.float_val;
-        advance(p);
+        advance_p(p);
         return node;
     }
     
-    if (check(p, TOKEN_STRING_LITERAL)) {
+    if (check_p(p, TOKEN_STRING_LITERAL)) {
         ASTNode *node = ast_create(AST_STRING_LITERAL_EXPR);
         node->data.string_literal.value = token_name(p);
-        advance(p);
+        advance_p(p);
         return node;
     }
     
-    if (check(p, TOKEN_CHAR_CONSTANT)) {
+    if (check_p(p, TOKEN_CHAR_CONSTANT)) {
         ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
         node->data.int_literal.value = p->current.value.int_val;
-        advance(p);
+        advance_p(p);
         return node;
     }
     
-    if (check(p, TOKEN_LPAREN)) {
-        advance(p);
+    if (check_p(p, TOKEN_LPAREN)) {
+        advance_p(p);
         ASTNode *expr = parse_expression(p);
         expect(p, TOKEN_RPAREN, "expected ')'");
-        advance(p);
+        advance_p(p);
         return expr;
     }
     
@@ -1895,7 +2024,7 @@ static ASTNode *parse_primary_expr(Parser *p) {
 }
 
 static void expect(Parser *p, TokenType t, const char *msg) {
-    if (check(p, t)) return;
+    if (check_p(p, t)) return;
     fprintf(stderr, "error: [%d:%d] %s\n", p->current.line, p->current.column, msg);
 }
 
@@ -1904,7 +2033,7 @@ Parser *parser_create(Lexer *lexer) {
     p->lexer = lexer;
     p->translation_unit = ast_create(AST_TRANSLATION_UNIT);
     p->translation_unit->data.unit.declarations = list_create();
-    advance(p); // Get first token
+    advance_p(p); // Get first token
     return p;
 }
 
@@ -1917,17 +2046,17 @@ void parser_destroy(Parser *p) {
 }
 
 ASTNode *parse(Parser *p) {
-    while (!check(p, TOKEN_EOF)) {
+    while (!check_p(p, TOKEN_EOF)) {
         // Skip error tokens
-        while (check(p, TOKEN_ERROR)) {
-            advance(p);
+        while (check_p(p, TOKEN_ERROR)) {
+            advance_p(p);
         }
-        if (check(p, TOKEN_EOF)) break;
+        if (check_p(p, TOKEN_EOF)) break;
 
         if (is_type(p)) {
             ASTNode *decl = parse_declaration(p);
             if (decl) list_push(p->translation_unit->data.unit.declarations, decl);
-        } else if (check(p, TOKEN_IDENTIFIER)) {
+        } else if (check_p(p, TOKEN_IDENTIFIER)) {
             // Check if this is an implicit int function definition: name() { ... }
             // Save position and check if identifier is followed by '('
             size_t saved_pos = p->lexer->position;
@@ -1935,11 +2064,11 @@ ASTNode *parse(Parser *p) {
             int saved_col = p->lexer->column;
             
             char *name = token_name(p);
-            advance(p);  // consume identifier
+            advance_p(p);  // consume identifier
             
-            if (check(p, TOKEN_LPAREN)) {
+            if (check_p(p, TOKEN_LPAREN)) {
                 // This is a function definition with implicit int return type
-                advance(p); // consume '('
+                advance_p(p); // consume '('
                 Type *int_type = type_create(TYPE_INT);
                 ASTNode *func = parse_function_definition(p, int_type, name);
                 free(name);

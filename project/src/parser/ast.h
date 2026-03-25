@@ -108,6 +108,7 @@ struct ASTNode {
     int line;
     int column;
     Type *type_info;
+    bool is_static;  // True if declared with 'static' keyword
     union {
         struct { List *declarations; } unit;
         struct { char *name; Type *func_type; List *params; ASTNode *body; } function;

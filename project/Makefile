@@ -21,12 +21,13 @@ IR_SRC = $(SRC_DIR)/ir/ir.c $(SRC_DIR)/ir/lowerer.c
 OPT_SRC = $(SRC_DIR)/optimize/optimizer.c $(SRC_DIR)/optimize/constfold.c $(SRC_DIR)/optimize/dce.c
 BACKEND_SRC = $(SRC_DIR)/backend/codegen.c $(SRC_DIR)/backend/regalloc.c $(SRC_DIR)/backend/asm.c $(SRC_DIR)/backend/dwarf.c
 DRIVER_SRC = $(SRC_DIR)/driver.c
+RUNTIME_SRC = $(SRC_DIR)/runtime.c
 
 # Main entry point
 MAIN_SRC = $(SRC_DIR)/main.c
 
 # All source files (excluding tests)
-ALL_SRC = $(COMMON_SRC) $(LEXER_SRC) $(PARSER_SRC) $(SEMA_SRC) $(IR_SRC) $(OPT_SRC) $(BACKEND_SRC) $(DRIVER_SRC) $(MAIN_SRC)
+ALL_SRC = $(COMMON_SRC) $(LEXER_SRC) $(PARSER_SRC) $(SEMA_SRC) $(IR_SRC) $(OPT_SRC) $(BACKEND_SRC) $(DRIVER_SRC) $(RUNTIME_SRC) $(MAIN_SRC)
 
 # Executable
 COMPILER = $(BIN_DIR)/compiler
@@ -266,17 +267,34 @@ $(STAGE1): $(STAGE0) | $(BUILD_DIR)
 		objs=""; \
 		for asm in $(STAGE0_ASM)/*.s; do \
 			base=$$(basename "$$asm" .s); \
-			clang -c "$$asm" -o $(STAGE0_ASM)/$$base.o 2>/dev/null; \
-			if [ -f $(STAGE0_ASM)/$$base.o ]; then \
-				objs="$$objs $(STAGE0_ASM)/$$base.o"; \
+			if [ "$$base" != "runtime" ]; then \
+				clang -c "$$asm" -o $(STAGE0_ASM)/$$base.o; \
+				if [ -f $(STAGE0_ASM)/$$base.o ]; then \
+					objs="$$objs $(STAGE0_ASM)/$$base.o"; \
+				fi; \
 			fi; \
 		done; \
+		\
+		echo "Assembling runtime stubs for bootstrap..."; \
+		as $(SRC_DIR)/runtime.s -o $(STAGE0_ASM)/runtime.o; \
+		if [ -f $(STAGE0_ASM)/runtime.o ]; then \
+			objs="$$objs $(STAGE0_ASM)/runtime.o"; \
+		fi; \
+		\
 		if [ -n "$$objs" ]; then \
-			clang $$objs -o $(STAGE1) -lm 2>/dev/null; \
+			echo "Linking stage1 compiler..."; \
+			clang -undefined dynamic_lookup $$objs -o $(STAGE1) -lm; \
 			if [ -f $(STAGE1) ]; then \
 				echo "stage1 compiler built: $(STAGE1)"; \
 			else \
-				echo "Error: Linking failed"; \
+				echo "Error: Linking failed with clang, trying with gcc..."; \
+				gcc $$objs -o $(STAGE1) -lm; \
+				if [ -f $(STAGE1) ]; then \
+					echo "stage1 compiler built with gcc: $(STAGE1)"; \
+				else \
+					echo "Error: Both clang and gcc linking failed"; \
+					echo "Objects: $$objs"; \
+				fi; \
 			fi; \
 		else \
 			echo "Error: No object files to link"; \
