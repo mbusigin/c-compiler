@@ -65,6 +65,7 @@ typedef struct IRFunction {
     char *name;
     List *params;
     List *blocks;
+    bool is_static;  // True if function has static storage class
 } IRFunction;
 
 typedef struct IRModule {

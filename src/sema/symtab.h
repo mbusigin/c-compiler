@@ -23,6 +23,7 @@ typedef struct Symbol {
     int scope_level;
     bool is_defined;
     bool is_used;
+    bool is_static;  // True if declared with 'static' keyword
     struct Symbol *next;  // For hash table chaining
 } Symbol;
 

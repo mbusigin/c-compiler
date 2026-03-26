@@ -768,12 +768,17 @@ static void gen_function(IRFunction *func) {
     }
     
     // Use underscore prefix for all functions (macOS convention)
-    emit("\n\t.globl\t_%s\n", func->name);
+    // Only emit .globl for non-static functions (static functions have internal linkage)
+    if (!func->is_static) {
+        emit("\n\t.globl\t_%s\n", func->name);
+    } else {
+        emit("\n");  // Just a newline for static functions
+    }
     emit("\t.p2align\t2\n");
     emit("\t_%s:\n", func->name);
     
     // For main function, also create a non-underscored alias
-    if (strcmp(func->name, "main") == 0) {
+    if (strcmp(func->name, "main") == 0 && !func->is_static) {
         emit("\t.globl\t%s\n", func->name);
         emit("\t.set\t%s, _%s\n", func->name, func->name);
     }

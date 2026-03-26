@@ -136,6 +136,7 @@ static void analyze_declaration(ASTNode *node) {
             
             if (sym && !sym->is_defined && node->data.function.body) {
                 sym->is_defined = true;
+                sym->is_static = node->is_static;  // Preserve static storage class
                 symtab_enter_scope(current_symtab);
                 
                 // Save current function context

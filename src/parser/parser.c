@@ -984,8 +984,10 @@ static ASTNode *parse_declaration(Parser *p) {
     }
     
     // Handle static keyword
+    bool is_static = false;
     if (check_p(p, TOKEN_STATIC)) {
         advance_p(p); // consume 'static'
+        is_static = true;
         // Continue parsing the declaration after 'static'
     }
     
@@ -1202,6 +1204,7 @@ static ASTNode *parse_declaration(Parser *p) {
     if (check_p(p, TOKEN_LPAREN)) {
         advance_p(p); // consume '('
         ASTNode *func = parse_function_definition(p, base_type, name);
+        func->is_static = is_static;  // Preserve static storage class
         free(name);
         return func;
     }
@@ -1221,6 +1224,7 @@ static ASTNode *parse_declaration(Parser *p) {
     
     // Variable declaration
     ASTNode *decl = ast_create(AST_VARIABLE_DECL);
+    decl->is_static = is_static;  // Preserve static storage class
     decl->data.variable.var_type = base_type;
     decl->data.variable.name = name;
     decl->data.variable.init = NULL;

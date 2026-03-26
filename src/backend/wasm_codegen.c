@@ -27,12 +27,19 @@ static int next_local_index = 0;  // Will be set to param_count + 1
 static int temp_local_for_save_x8 = -1;
 static int temp_local_for_x20 = -1;
 
+// Stack pointer for local arrays - starts at 65536 (64KB)
+static int wasm_stack_ptr = 65536;
+
 static void reset_local_vars(int param_count) {
     local_var_count = 0;
     next_local_index = param_count;  // Start locals after parameters
     // Reset temp locals for new function
     temp_local_for_save_x8 = -1;
     temp_local_for_x20 = -1;
+}
+
+static void reset_stack_ptr(void) {
+    wasm_stack_ptr = 65536;  // Reset to 64KB base
 }
 
 static int get_or_create_local(int offset) {
@@ -209,6 +216,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.add");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -217,6 +225,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.sub");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -225,6 +234,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.mul");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -233,6 +243,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.div_s");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -241,6 +252,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.rem_s");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -249,6 +261,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.and");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -257,6 +270,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.or");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -265,6 +279,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.xor");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -273,6 +288,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.shl");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -281,6 +297,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[0]);
                 emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.shr_s");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -288,6 +305,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             if (instr->num_args >= 1) {
                 emit_value(ctx, instr->args[0]);
                 wasm_emit_instr(ctx, "i32.eqz");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -297,6 +315,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.lt_s");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_CMP_GT:
@@ -305,6 +324,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.gt_s");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_CMP_LE:
@@ -313,6 +333,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.le_s");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_CMP_GE:
@@ -321,6 +342,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.ge_s");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_CMP_EQ:
@@ -329,6 +351,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.eq");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_CMP_NE:
@@ -337,6 +360,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
                 emit_value(ctx, instr->args[1]);
             }
             wasm_emit_instr(ctx, "i32.ne");
+            if (instr->result) instr->result->emitted = true;
             break;
             
         case IR_LOAD:
@@ -346,9 +370,11 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             break;
             
         case IR_STORE:
+            // WASM i32.store expects: address, value (value on top of stack)
+            // So emit address first, then value
             if (instr->num_args >= 2) {
-                emit_value(ctx, instr->args[1]);
-                emit_value(ctx, instr->args[0]);
+                emit_value(ctx, instr->args[0]);  // address
+                emit_value(ctx, instr->args[1]);  // value
                 wasm_emit_instr(ctx, "i32.store");
             }
             break;
@@ -440,8 +466,9 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
         case IR_SAVE_X8_TO_X20:
             // Save the current value to a second temp local (x20)
             // Used for preserving pointer values across function calls
+            // Note: Use local.set to save without leaving on stack
             if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
-            wasm_emit_instr(ctx, "local.tee $%d", temp_local_for_x20);
+            wasm_emit_instr(ctx, "local.set $%d", temp_local_for_x20);
             break;
 
         case IR_RESTORE_X8_FROM_X20:
@@ -452,12 +479,35 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
 
         case IR_LEA:
             // Load effective address (sp + offset)
-            // For WASM, this is just the offset value
+            // For WASM, emit the address stored for this allocation
             if (instr->result && instr->result->offset >= 0) {
                 int local = get_or_create_local(instr->result->offset);
                 wasm_emit_instr(ctx, "local.get $%d", local);
             } else {
                 wasm_emit_instr(ctx, "i32.const 0");
+            }
+            break;
+            
+        case IR_ALLOCA:
+            // Allocate stack space for local variables/arrays
+            // For WASM, allocate from linear memory and store address in a local
+            if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                int size = instr->result->data.int_val;
+                if (size <= 0) size = 8;  // Default size
+                
+                // Allocate space and get address
+                int addr = wasm_stack_ptr;
+                wasm_stack_ptr += size;
+                
+                // Round up to 8-byte alignment
+                wasm_stack_ptr = (wasm_stack_ptr + 7) & ~7;
+                
+                // Store the address in a local
+                if (instr->result->offset >= 0) {
+                    int local = get_or_create_local(instr->result->offset);
+                    wasm_emit_instr(ctx, "i32.const %d", addr);
+                    wasm_emit_instr(ctx, "local.set $%d", local);
+                }
             }
             break;
 
@@ -510,15 +560,87 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
         }
     }
 
-    // Process instructions, converting control flow to WASM if/else blocks
+    // Process instructions, converting control flow to WASM if/else blocks and loops
     int i = 0;
     while (i < instr_count) {
         IRInstruction *instr = all_instrs[i];
 
-        if (instr->opcode == IR_JMP_IF) {
-            // This is the start of an if statement
+        if (instr->opcode == IR_LABEL) {
+            // Check if this label is the target of a backward jump (loop)
+            int is_loop = 0;
+            const char *label_name = instr->label;
+            if (label_name) {
+                // Look for a JMP that targets this label
+                for (int j = i + 1; j < instr_count; j++) {
+                    if (all_instrs[j]->opcode == IR_JMP && all_instrs[j]->label &&
+                        strcmp(all_instrs[j]->label, label_name) == 0) {
+                        is_loop = 1;
+                        break;
+                    }
+                }
+            }
+            
+            if (is_loop) {
+                // This is a while loop - emit WASM loop construct
+                // Find the JMP_IF that exits the loop
+                int jmp_if_idx = -1;
+                int jmp_idx = -1;
+                for (int j = i + 1; j < instr_count; j++) {
+                    if (all_instrs[j]->opcode == IR_JMP_IF) {
+                        jmp_if_idx = j;
+                    }
+                    if (all_instrs[j]->opcode == IR_JMP && all_instrs[j]->label &&
+                        strcmp(all_instrs[j]->label, label_name) == 0) {
+                        jmp_idx = j;
+                        break;
+                    }
+                }
+                
+                if (jmp_if_idx >= 0 && jmp_idx < instr_count - 1) {
+                    // Emit loop structure
+                    wasm_emit_indented(ctx, 2, "(loop $continue\n");
+                    
+                    // Emit condition check instructions (between label and JMP_IF)
+                    for (int j = i + 1; j < jmp_if_idx; j++) {
+                        emit_instr(ctx, all_instrs[j]);
+                    }
+                    
+                    // Emit if with body and branch back
+                    wasm_emit_indented(ctx, 2, "  (if\n");
+                    wasm_emit_indented(ctx, 2, "    (then\n");
+                    
+                    // Emit body (between JMP_IF and JMP)
+                    int j = jmp_if_idx + 1;
+                    int last_was_restore = 0;
+                    while (j < jmp_idx) {
+                        emit_instr(ctx, all_instrs[j]);
+                        last_was_restore = (all_instrs[j]->opcode == IR_RESTORE_X8_RESULT);
+                        j++;
+                    }
+                    if (last_was_restore) {
+                        wasm_emit_instr(ctx, "drop");
+                    }
+                    
+                    // Branch back to loop start
+                    wasm_emit_instr(ctx, "br $continue");
+                    
+                    wasm_emit_indented(ctx, 2, "    )\n");
+                    wasm_emit_indented(ctx, 2, "  )\n");
+                    wasm_emit_indented(ctx, 2, ")\n");
+                    
+                    // Skip to after the JMP and the exit label
+                    i = jmp_idx + 1;
+                    // Skip the exit label if present
+                    if (i < instr_count && all_instrs[i]->opcode == IR_LABEL) i++;
+                } else {
+                    i++;  // Skip the label
+                }
+            } else {
+                i++;  // Skip non-loop labels
+            }
+        } else if (instr->opcode == IR_JMP_IF) {
+            // This is the start of an if statement (not a loop)
             // The condition is already on the stack from the previous comparison instruction
-            // So we don't need to emit it again
 
             // Find the next JMP instruction (skip to end of then block)
             int jmp_idx = -1;
@@ -585,8 +707,8 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
             // Skip to after the end label
             while (i < instr_count && all_instrs[i]->opcode != IR_LABEL) i++;
             if (i < instr_count) i++;  // Skip the end label
-        } else if (instr->opcode == IR_LABEL || instr->opcode == IR_JMP) {
-            // Skip labels and unconditional jumps (handled by if/else)
+        } else if (instr->opcode == IR_JMP) {
+            // Skip unconditional jumps (handled by loop/if)
             i++;
         } else {
             // Emit regular instruction
@@ -601,6 +723,8 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
 
 void wasm_codegen_generate(IRModule *module, FILE *out) {
     if (!module || !out) return;
+    
+    reset_stack_ptr();  // Reset stack pointer for new module
     
     WasmContext *ctx = wasm_context_create(out);
     wasm_emit_module_header(ctx);

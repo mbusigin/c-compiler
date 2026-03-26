@@ -1594,6 +1594,7 @@ static void lower_statement(ASTNode *node) {
 // Lower a function
 static void lower_function(ASTNode *node) {
     IRFunction *func = ir_function_create(node->data.function.name);
+    func->is_static = node->is_static;  // Preserve static storage class
     list_push(current_module->functions, func);
 
     IRBasicBlock *entry = ir_block_create("entry");

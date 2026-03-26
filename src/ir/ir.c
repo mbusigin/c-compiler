@@ -16,22 +16,29 @@ static const char *op_name(IROpcode op) {
         case IR_RET: return "ret";
         case IR_RET_VOID: return "ret_void";
         case IR_CALL: return "call";
+        case IR_CALL_INDIRECT: return "call_indirect";
         case IR_LOAD: return "load";
         case IR_STORE: return "store";
         case IR_ALLOCA: return "alloca";
         case IR_ADD: return "add";
+        case IR_ADD_F: return "add_f";
         case IR_SUB: return "sub";
+        case IR_SUB_F: return "sub_f";
         case IR_MUL: return "mul";
+        case IR_MUL_F: return "mul_f";
         case IR_DIV: return "div";
+        case IR_DIV_F: return "div_f";
         case IR_MOD: return "mod";
+        case IR_NEG: return "neg";
+        case IR_NEG_F: return "neg_f";
         case IR_AND: return "and";
         case IR_OR: return "or";
         case IR_XOR: return "xor";
         case IR_SHL: return "shl";
         case IR_SHR: return "shr";
         case IR_NOT: return "not";
-        case IR_NEG: return "neg";
         case IR_CMP: return "cmp";
+        case IR_CMP_F: return "cmp_f";
         case IR_CMP_LT: return "cmp_lt";
         case IR_CMP_GT: return "cmp_gt";
         case IR_CMP_LE: return "cmp_le";
@@ -41,17 +48,28 @@ static const char *op_name(IROpcode op) {
         case IR_BOOL_AND: return "bool_and";
         case IR_BOOL_OR: return "bool_or";
         case IR_CONST_INT: return "const_int";
+        case IR_CONST_FLOAT: return "const_float";
+        case IR_CONST_STRING: return "const_string";
         case IR_LOAD_STACK: return "load_stack";
         case IR_STORE_STACK: return "store_stack";
         case IR_STORE_PARAM: return "store_param";
         case IR_SAVE_X8: return "save_x8";
         case IR_RESTORE_X8_RESULT: return "restore_x8_result";
+        case IR_SAVE_X8_TO_X20: return "save_x8_to_x20";
+        case IR_RESTORE_X8_FROM_X20: return "restore_x8_from_x20";
         case IR_LOAD_OFFSET: return "load_offset";
         case IR_STORE_OFFSET: return "store_offset";
         case IR_STORE_INDIRECT: return "store_indirect";
         case IR_LEA: return "lea";
         case IR_ADD_X21: return "add_x21";
         case IR_ADD_IMM64: return "add_imm64";
+        case IR_SEXT: return "sext";
+        case IR_ZEXT: return "zext";
+        case IR_TRUNC: return "trunc";
+        case IR_SITOFP: return "sitofp";
+        case IR_FPTOSI: return "fptosi";
+        case IR_LOAD_GLOBAL: return "load_global";
+        case IR_STORE_GLOBAL: return "store_global";
         default: return "unknown";
     }
 }
@@ -75,6 +93,7 @@ IRFunction *ir_function_create(const char *name) {
     f->name = xstrdup(name);
     f->params = list_create();
     f->blocks = list_create();
+    f->is_static = false;  // Default to false
     return f;
 }
 
