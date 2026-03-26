@@ -115,3 +115,9 @@ valgrind.out
 project/compiler
 project/compiler.dSYM/
 project/build/
+
+# Local analysis files
+error-analysis.md
+fix-swot.md
+test-wasm-output.txt
+simple_test.c
