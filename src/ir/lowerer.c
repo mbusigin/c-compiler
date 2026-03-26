@@ -815,17 +815,66 @@ static void lower_variable_decl(ASTNode *node) {
     
     // Handle initializer
     if (node->data.variable.init) {
-        // Evaluate initializer → x0 = value, x8 = value
-        IRValue *init_val = lower_expression(node->data.variable.init);
-        UNUSED(init_val);
-        
-        // Store value to [sp, #offset] using IR_STORE_STACK
-        IRValue *result = ir_value_create(IR_VALUE_INT);
-        result->offset = var_offset;
-        result->param_reg = -2;  // Mark as local variable, not parameter
-        IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
-        store_i->result = result;
-        add_instr(store_i);
+        // Check if this is an array initializer list
+        if (is_array && node->data.variable.init->type == AST_INITIALIZER_LIST) {
+            // For array initializers, emit stores for each element
+            List *elements = node->data.variable.init->data.init_list.elements;
+            if (elements) {
+                for (size_t i = 0; i < list_size(elements); i++) {
+                    ASTNode *elem = list_get(elements, i);
+                    if (elem) {
+                        // Evaluate the element value
+                        IRValue *elem_val = lower_expression(elem);
+                        
+                        // Calculate address: base + i * 4 (assuming int elements)
+                        IRValue *index_val = ir_value_create(IR_VALUE_INT);
+                        index_val->data.int_val = i * 4;
+                        index_val->is_constant = true;
+                        IRInstruction *index_instr = ir_instr_create(IR_CONST_INT);
+                        index_instr->result = index_val;
+                        add_instr(index_instr);
+                        
+                        // Get base address
+                        IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                        addr_val->offset = var_offset;
+                        addr_val->is_constant = false;
+                        addr_val->is_temp = true;
+                        IRInstruction *addr_instr = ir_instr_create(IR_LEA);
+                        addr_instr->result = addr_val;
+                        add_instr(addr_instr);
+                        
+                        // Add offset to base
+                        IRInstruction *add_offset_instr = ir_instr_create(IR_ADD);
+                        add_offset_instr->result = ir_value_create(IR_VALUE_INT);
+                        add_offset_instr->result->is_temp = true;
+                        add_offset_instr->args[0] = addr_val;
+                        add_offset_instr->args[1] = index_val;
+                        add_offset_instr->num_args = 2;
+                        add_instr(add_offset_instr);
+                        
+                        // Store the element
+                        IRInstruction *store_instr = ir_instr_create(IR_STORE);
+                        store_instr->args[0] = add_offset_instr->result;  // address
+                        store_instr->args[1] = elem_val;  // value
+                        store_instr->num_args = 2;
+                        add_instr(store_instr);
+                    }
+                }
+            }
+        } else {
+            // Scalar initializer
+            // Evaluate initializer → x0 = value, x8 = value
+            IRValue *init_val = lower_expression(node->data.variable.init);
+            
+            // Store value to [sp, #offset] using IR_STORE_STACK
+            IRValue *result = ir_value_create(IR_VALUE_INT);
+            result->offset = var_offset;
+            result->param_reg = -2;  // Mark as local variable, not parameter
+            IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+            store_i->result = result;
+            add_instr(store_i);
+            UNUSED(init_val);
+        }
     }
 }
 

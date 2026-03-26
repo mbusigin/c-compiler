@@ -361,9 +361,19 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             break;
             
         case IR_STORE_STACK:
-            // In WASM, we don't need to emit anything for IR_STORE_STACK
-            // Values are automatically stored when they're computed
-            // This instruction is only needed for ARM64 register allocation
+            if (instr->result) {
+                // Store value from stack to local variable
+                // The value should already be on the stack from previous instructions
+                int local;
+                if (instr->result->param_reg >= 0) {
+                    // This is a parameter
+                    local = instr->result->param_reg;
+                } else {
+                    // This is a local variable - map offset to local index
+                    local = get_or_create_local(instr->result->offset);
+                }
+                wasm_emit_instr(ctx, "local.set $%d", local);
+            }
             break;
             
         case IR_CALL:
@@ -387,7 +397,55 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
         case IR_RET_VOID:
             wasm_emit_instr(ctx, "return");
             break;
-            
+
+        case IR_SAVE_X8:
+            // Save the current value on stack to a temp local WITHOUT popping
+            // Uses local.tee which saves the value and leaves it on stack
+            {
+                static int temp_local = -1;
+                if (temp_local < 0) temp_local = get_or_create_local(9999);  // Use offset 9999 for temp
+                wasm_emit_instr(ctx, "local.tee $%d", temp_local);
+            }
+            break;
+
+        case IR_ADD_X21:
+            // Add the saved value (x21) to the current value (x8)
+            {
+                static int temp_local = -1;
+                if (temp_local < 0) temp_local = get_or_create_local(9999);
+                wasm_emit_instr(ctx, "local.get $%d", temp_local);
+                wasm_emit_instr(ctx, "i32.add");
+            }
+            break;
+
+        case IR_STORE_INDIRECT:
+            // Store value to memory at address
+            // Stack: [address, value] -> []
+            // In WASM: i32.store
+            wasm_emit_instr(ctx, "i32.store");
+            break;
+
+        case IR_RESTORE_X8_RESULT:
+            // Restore the saved value (x22) to the stack
+            // This is used for post-increment/decrement to return the original value
+            {
+                static int temp_local = -1;
+                if (temp_local < 0) temp_local = get_or_create_local(9999);
+                wasm_emit_instr(ctx, "local.get $%d", temp_local);
+            }
+            break;
+
+        case IR_LEA:
+            // Load effective address (sp + offset)
+            // For WASM, this is just the offset value
+            if (instr->result && instr->result->offset >= 0) {
+                int local = get_or_create_local(instr->result->offset);
+                wasm_emit_instr(ctx, "local.get $%d", local);
+            } else {
+                wasm_emit_instr(ctx, "i32.const 0");
+            }
+            break;
+
         default:
             // Skip other instructions
             break;
@@ -478,10 +536,18 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
 
             // Emit the then block (instructions after JMP_IF until else label or JMP)
             int j = i + 1;
+            int last_was_restore = 0;
             while (j < instr_count && all_instrs[j]->opcode != IR_LABEL &&
                    all_instrs[j]->opcode != IR_JMP) {
                 emit_instr(ctx, all_instrs[j]);
+                last_was_restore = (all_instrs[j]->opcode == IR_RESTORE_X8_RESULT);
                 j++;
+            }
+            
+            // If the then block left a value on the stack (from post-increment/decrement),
+            // drop it since if blocks shouldn't produce values
+            if (last_was_restore) {
+                wasm_emit_instr(ctx, "drop");
             }
 
             if (has_else) {
