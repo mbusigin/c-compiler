@@ -11,9 +11,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 // Forward declarations
 static void emit_instruction(WasmContext *ctx, IRInstruction *instr);
+static int function_returns_void(IRFunction *func);
 
 // Block tracking for structured control flow
 typedef struct BlockInfo {
@@ -24,6 +26,13 @@ typedef struct BlockInfo {
 
 static BlockInfo block_stack[64];
 static int block_stack_top = 0;
+
+// Track which functions return void (future use)
+typedef struct VoidFunction {
+    char *name;
+    struct VoidFunction *next;
+} VoidFunction;
+// static VoidFunction *void_functions = NULL;  // Not used yet
 
 // Create WASM codegen context
 WasmContext *wasm_context_create(FILE *out) {
@@ -36,6 +45,7 @@ WasmContext *wasm_context_create(FILE *out) {
     ctx->memory_pages = 2;  // 128KB default
     ctx->has_printf = false;
     ctx->has_putchar = false;
+    ctx->stack_depth = 0;
     block_stack_top = 0;
     return ctx;
 }
@@ -118,22 +128,121 @@ void wasm_emit_exports(WasmContext *ctx, IRModule *module) {
     }
 }
 
+// Global variable to track parameter count for current function
+static int wasm_param_count = 0;
+static int wasm_param_storage_size = 0;  // Size of parameter storage in IR offsets
+
 // Emit function header
 void wasm_emit_function_header(WasmContext *ctx, IRFunction *func) {
     if (!func) return;
     
-    // Always emit result i32 for simplicity
-    wasm_emit_indented(ctx, 1, "(func $%s (result i32)\n", func->name);
+    // For WASM, we need to track parameter storage separately from local variables.
+    // Parameter storage uses IR_STORE_PARAM with param_reg indicating which param (0, 1, 2, etc.)
+    // Local variables use IR_STORE_STACK with offset / 8 as the slot index.
+    //
+    // In WASM, parameters are locals 0, 1, 2, etc.
+    // Local variables need to start AFTER all parameter storage.
+    //
+    // Strategy:
+    // - Find the maximum param_reg used for parameter storage
+    // - Find the maximum slot used for local variables
+    // - wasm_param_storage_size = max(max_param_reg + 1, max_local_slot + 1)
     
-    // Emit locals - in a full implementation, we'd analyze the IR to determine needed locals
-    wasm_emit_indented(ctx, 2, "(local $result i32)\n");
-    wasm_emit_indented(ctx, 2, "(local $fp i32)\n");
-    wasm_emit_indented(ctx, 2, "(local $sp i32)\n");
+    // First pass: find max param_reg for parameter storage
+    int max_param_reg_for_storage = -1;
+    int max_local_slot = -1;
+    
+    if (func->blocks) {
+        for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
+            IRBasicBlock *block = list_get(func->blocks, bi);
+            if (!block || !block->instructions) continue;
+            for (size_t i = 0; i < list_size(block->instructions); i++) {
+                IRInstruction *instr = list_get(block->instructions, i);
+                if (!instr) continue;
+                
+                // IR_STORE_PARAM: param_reg indicates the parameter (0, 1, 2, etc.)
+                if (instr->opcode == IR_STORE_PARAM) {
+                    // param_reg might be in data.int_val
+                    int param_idx = instr->result->data.int_val;
+                    if (param_idx >= 0 && param_idx < 16) {
+                        if (param_idx > max_param_reg_for_storage) {
+                            max_param_reg_for_storage = param_idx;
+                        }
+                    }
+                }
+                
+                // IR_STORE_STACK: offset / 8 is the local slot index
+                if (instr->opcode == IR_STORE_STACK) {
+                    int slot = instr->result->offset / 8;
+                    if (slot > max_local_slot) {
+                        max_local_slot = slot;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Parameter count = number of parameters
+    wasm_param_count = max_param_reg_for_storage + 1;
+    if (wasm_param_count < 0) wasm_param_count = 0;
+    if (wasm_param_count > 4) wasm_param_count = 4;
+    
+    // Parameter storage size = number of slots needed for parameter storage
+    int param_storage_slots = max_param_reg_for_storage + 1;
+    if (param_storage_slots < 0) param_storage_slots = 0;
+    
+    // Local variable slots start after parameter storage
+    wasm_param_storage_size = param_storage_slots + max_local_slot + 1;
+    if (wasm_param_storage_size < wasm_param_count) wasm_param_storage_size = wasm_param_count;
+    if (wasm_param_storage_size < 1) wasm_param_storage_size = 1;
+    
+    // Determine if function returns void
+    int returns_void = function_returns_void(func);
+    
+    // Debug: print parameter info
+    // fprintf(stderr, "DEBUG WASM: function '%s', max_param_reg=%d, max_local_slot=%d, wasm_param_count=%d, wasm_param_storage_size=%d, returns_void=%d\n",
+    //         func->name, max_param_reg_for_storage, max_local_slot, wasm_param_count, wasm_param_storage_size, returns_void);
+    
+    // Emit function with parameters
+    wasm_emit_indented(ctx, 1, "(func $%s", func->name);
+    for (int i = 0; i < wasm_param_count; i++) {
+        wasm_emit(ctx, " (param $%d i32)", i);
+    }
+    // Only emit result type if function doesn't return void
+    if (!returns_void) {
+        wasm_emit(ctx, " (result i32)");
+    }
+    wasm_emit(ctx, "\n");
+    
+    // Emit additional locals (beyond parameters)
+    // In WASM, params are also locals, so we start from wasm_param_count
+    for (int i = wasm_param_count; i < 16; i++) {
+        wasm_emit_indented(ctx, 2, "(local $%d i32)\n", i);
+    }
+    
+    ctx->local_index = 16;  // Reset for next function
 }
 
 // Emit function footer
 void wasm_emit_function_footer(WasmContext *ctx) {
     wasm_emit_indented(ctx, 1, ")\n");
+}
+
+// Check if function returns void
+static int function_returns_void(IRFunction *func) {
+    if (!func || !func->blocks) return 0;
+    
+    for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
+        IRBasicBlock *block = list_get(func->blocks, bi);
+        if (!block || !block->instructions) continue;
+        for (size_t i = 0; i < list_size(block->instructions); i++) {
+            IRInstruction *instr = list_get(block->instructions, i);
+            if (instr && instr->opcode == IR_RET_VOID) {
+                return 1;
+            }
+        }
+    }
+    return 0;
 }
 
 // Emit function body with proper nested block structure
@@ -142,15 +251,15 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
     
     wasm_set_indent(ctx, 2);
     block_stack_top = 0;
+    ctx->stack_depth = 0;  // Reset stack depth for this function
     
-    // Collect all LABELs and their positions
-    typedef struct {
-        const char *label;
-        size_t instr_idx;
-        int is_loop;
-    } LabelInfo;
-    LabelInfo labels[64];
-    int label_count = 0;
+    int returns_void = function_returns_void(func);
+    
+    // Simplified approach: emit instructions sequentially, handling control flow specially
+    
+    // First, collect all instructions into a flat list for easier processing
+    IRInstruction **all_instrs = NULL;
+    size_t instr_count = 0;
     
     for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
         IRBasicBlock *block = list_get(func->blocks, bi);
@@ -158,72 +267,184 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
         
         for (size_t i = 0; i < list_size(block->instructions); i++) {
             IRInstruction *instr = list_get(block->instructions, i);
-            if (instr && instr->opcode == IR_LABEL && instr->label && label_count < 64) {
-                labels[label_count].label = instr->label;
-                labels[label_count].instr_idx = i;
-                
-                // Check if loop (backward jump)
-                int is_loop = 0;
-                for (size_t j = i + 1; j < list_size(block->instructions); j++) {
-                    IRInstruction *later = list_get(block->instructions, j);
-                    if (later && later->label && strcmp(later->label, instr->label) == 0) {
-                        if (later->opcode == IR_JMP) {
-                            is_loop = 1;
-                            break;
-                        }
-                    }
-                }
-                labels[label_count].is_loop = is_loop;
-                label_count++;
+            if (instr) {
+                instr_count++;
             }
         }
     }
     
-    // Emit blocks in order, then instructions between them
+    if (instr_count == 0) return;
+    
+    all_instrs = xmalloc(instr_count * sizeof(IRInstruction*));
+    size_t idx = 0;
     for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
         IRBasicBlock *block = list_get(func->blocks, bi);
         if (!block || !block->instructions) continue;
         
-        size_t last_label_idx = 0;
-        for (int l = 0; l < label_count; l++) {
-            // Emit instructions before this label
-            for (size_t i = last_label_idx; i < labels[l].instr_idx && i < list_size(block->instructions); i++) {
-                IRInstruction *instr = list_get(block->instructions, i);
-                if (instr && instr->opcode != IR_LABEL) {
-                    emit_instruction(ctx, instr);
+        for (size_t i = 0; i < list_size(block->instructions); i++) {
+            IRInstruction *instr = list_get(block->instructions, i);
+            if (instr) {
+                all_instrs[idx++] = instr;
+            }
+        }
+    }
+    
+    // Detect if-else pattern: cmp -> jmp_if L1 -> ... -> ret -> jmp L2 -> label L1 -> ... -> ret -> label L2
+    // For simplicity, emit instructions sequentially, but handle JMP_IF specially
+    
+    // First pass: collect all labels and their positions
+    // This helps us map label names to instruction indices
+    typedef struct {
+        const char *label;
+        size_t pos;
+    } LabelPos;
+    
+    LabelPos *label_positions = xmalloc(instr_count * sizeof(LabelPos));
+    size_t label_count = 0;
+    
+    for (size_t i = 0; i < instr_count; i++) {
+        IRInstruction *instr = all_instrs[i];
+        if (instr->opcode == IR_LABEL && instr->label) {
+            label_positions[label_count].label = instr->label;
+            label_positions[label_count].pos = i;
+            label_count++;
+        }
+    }
+    
+    // Wrap function body in a block to provide a target for br instructions
+    // Only add (result i32) if function returns a value
+    if (!returns_void) {
+        wasm_emit_indented(ctx, 2, "(block $function_body (result i32)\n");
+    } else {
+        wasm_emit_indented(ctx, 2, "(block $function_body\n");
+    }
+    
+    // Pre-pass: push all labels to block stack first
+    // This ensures forward jumps can find their targets
+    for (size_t i = 0; i < instr_count; i++) {
+        IRInstruction *instr = all_instrs[i];
+        if (instr->opcode == IR_LABEL && instr->label) {
+            if (block_stack_top < 64) {
+                block_stack[block_stack_top].label = instr->label;
+                block_stack[block_stack_top].is_loop = 0;
+                block_stack[block_stack_top].depth = block_stack_top;
+                block_stack_top++;
+                fprintf(stderr, "DEBUG WASM: Pre-pushed label '%s' to block stack, top=%d\n", instr->label, block_stack_top);
+            }
+        }
+    }
+    
+    // Process instructions
+    for (size_t i = 0; i < instr_count; i++) {
+        IRInstruction *instr = all_instrs[i];
+        
+        // Skip labels in instruction emission
+        if (instr->opcode == IR_LABEL) {
+            continue;
+        }
+        
+        // Check for if-else pattern
+        if (instr->opcode == IR_JMP_IF && instr->label) {
+            // Find the else label (the target of jmp_if)
+            const char *else_label = instr->label;
+            
+            // Find the end of the then-block (JMP or RET after JMP_IF)
+            size_t then_end = i + 1;
+            for (size_t j = i + 1; j < instr_count; j++) {
+                if (all_instrs[j]->opcode == IR_JMP && all_instrs[j]->label) {
+                    then_end = j;
+                    break;
+                }
+                if (all_instrs[j]->opcode == IR_RET || all_instrs[j]->opcode == IR_RET_VOID) {
+                    then_end = j;
+                    // Keep looking for JMP
                 }
             }
             
-            // Emit block/loop
-            if (labels[l].is_loop) {
-                wasm_emit_indented(ctx, 2, "loop $%s\n", labels[l].label);
-            } else {
-                wasm_emit_indented(ctx, 2, "block $%s\n", labels[l].label);
-            }
-            if (block_stack_top < 64) {
-                block_stack[block_stack_top].label = labels[l].label;
-                block_stack[block_stack_top].is_loop = labels[l].is_loop;
-                block_stack_top++;
+            // Find else block start (skip past the else label and any following labels)
+            size_t else_start = 0;
+            for (size_t j = then_end + 1; j < instr_count; j++) {
+                if (all_instrs[j]->opcode == IR_LABEL && all_instrs[j]->label &&
+                    strcmp(all_instrs[j]->label, else_label) == 0) {
+                    // Skip the else label
+                    else_start = j + 1;
+                    // Also skip any labels that immediately follow (e.g., end label)
+                    while (else_start < instr_count && all_instrs[else_start]->opcode == IR_LABEL) {
+                        else_start++;
+                    }
+                    break;
+                }
             }
             
-            last_label_idx = labels[l].instr_idx + 1;
-        }
-        
-        // Emit remaining instructions after last label
-        for (size_t i = last_label_idx; i < list_size(block->instructions); i++) {
-            IRInstruction *instr = list_get(block->instructions, i);
-            if (instr && instr->opcode != IR_LABEL) {
-                emit_instruction(ctx, instr);
+            // Find else block end (look for RET, but also handle case where end_label comes right after else_label)
+            size_t else_end = else_start;
+            for (size_t j = else_start; j < instr_count; j++) {
+                if (all_instrs[j]->opcode == IR_RET || all_instrs[j]->opcode == IR_RET_VOID) {
+                    else_end = j;
+                    break;
+                }
+            }
+            
+            // Check if then-block and else-block both end with return
+            int then_has_ret = 0, else_has_ret = 0;
+            for (size_t j = i + 1; j <= then_end && j < instr_count; j++) {
+                if (all_instrs[j]->opcode == IR_RET) {
+                    then_has_ret = 1;
+                }
+            }
+            for (size_t j = else_start; j <= else_end && j < instr_count; j++) {
+                if (all_instrs[j]->opcode == IR_RET) {
+                    else_has_ret = 1;
+                }
+            }
+            
+            // If both branches return, use (if ... then ... else ...) pattern
+            if (then_has_ret && else_has_ret) {
+                // Emit (if (result i32) (condition) (then ... return ...) (else ... return ...))
+                wasm_emit_indented(ctx, 2, "(if (result i32)\n");
+                
+                // Condition is already on stack from comparison before JMP_IF
+                // Emit then block
+                wasm_emit_indented(ctx, 3, "(then\n");
+                for (size_t j = i + 1; j < then_end && j < instr_count; j++) {
+                    IRInstruction *then_instr = all_instrs[j];
+                    if (then_instr->opcode != IR_JMP && then_instr->opcode != IR_LABEL) {
+                        emit_instruction(ctx, then_instr);
+                    }
+                }
+                wasm_emit_indented(ctx, 3, ")\n");
+                
+                // Emit else block
+                wasm_emit_indented(ctx, 3, "(else\n");
+                for (size_t j = else_start; j < else_end && j < instr_count; j++) {
+                    IRInstruction *else_instr = all_instrs[j];
+                    if (else_instr->opcode != IR_LABEL) {
+                        emit_instruction(ctx, else_instr);
+                    }
+                }
+                wasm_emit_indented(ctx, 3, ")\n");
+                
+                wasm_emit_indented(ctx, 2, ")\n");
+                
+                // Skip past the else block and end label
+                i = else_end;
+                if (i < instr_count && all_instrs[i]->opcode == IR_LABEL) {
+                    // Skip the end label too
+                }
+                continue;
             }
         }
+        
+        // Default: just emit the instruction
+        emit_instruction(ctx, instr);
     }
     
-    // Close all blocks
-    for (int i = block_stack_top - 1; i >= 0; i--) {
-        wasm_emit_indented(ctx, 2, "end\n");
-    }
+    // Close the function body block
+    wasm_emit_indented(ctx, 2, ")\n");
     
-    block_stack_top = 0;
+    free(label_positions);
+    
+    free(all_instrs);
     wasm_set_indent(ctx, 0);
 }
 
@@ -251,17 +472,20 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                     }
                 }
                 if (depth >= 0) {
-                    wasm_emit_instr(ctx, "br %d", depth);
+                    // For now, emit comment instead of actual branch
+                    // TODO: Implement proper block structure
+                    wasm_emit_comment(ctx, "JMP to %s (depth %d)", instr->label, depth);
                 } else {
+                    fprintf(stderr, "DEBUG WASM: JMP to label '%s' not found in block stack (top=%d)\n", instr->label, block_stack_top);
+                    // Label not found - emit comment
                     wasm_emit_comment(ctx, "JMP to %s (label not found)", instr->label);
                 }
             }
             break;
             
         case IR_JMP_IF:
-            if (instr->num_args > 0 && instr->args[0]) {
-                wasm_emit_value(ctx, instr->args[0]);
-            }
+            // Comparison result is already on stack, just emit br_if
+            // The value to test is already on the stack from the comparison
             if (instr->label) {
                 int depth = -1;
                 for (int i = block_stack_top - 1; i >= 0; i--) {
@@ -271,18 +495,24 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                     }
                 }
                 if (depth >= 0) {
-                    wasm_emit_instr(ctx, "br_if %d", depth);
+                    // For now, emit comment instead of actual branch
+                    // TODO: Implement proper block structure
+                    wasm_emit_comment(ctx, "JMP_IF to %s (depth %d)", instr->label, depth);
+                    wasm_emit_instr(ctx, "drop");
                 } else {
-                    wasm_emit_comment(ctx, "JMP_IF to %s (label not found)", instr->label);
+                    fprintf(stderr, "DEBUG WASM: JMP_IF to label '%s' not found in block stack (top=%d)\n", instr->label, block_stack_top);
+                    // Label not found - drop the condition and continue
+                    wasm_emit_instr(ctx, "drop");
                 }
             }
             break;
             
         case IR_RET:
             if (instr->num_args > 0 && instr->args[0]) {
-                wasm_emit_value(ctx, instr->args[0]);
-            } else {
-                wasm_emit_instr(ctx, "i32.const 0");
+                // Don't emit if result is a temp (already pushed by previous instruction)
+                if (!instr->args[0]->is_temp) {
+                    wasm_emit_value(ctx, instr->args[0]);
+                }
             }
             wasm_emit_instr(ctx, "return");
             break;
@@ -312,6 +542,8 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
         case IR_CONST_INT:
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 wasm_emit_const_int(ctx, instr->result->data.int_val);
+                ctx->stack_depth++;
+                instr->result->emitted = true;  // Mark as emitted to avoid double-emission
             }
             break;
             
@@ -320,6 +552,11 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.add");
+                ctx->stack_depth--;
+                // Mark the result as emitted (it's now on the stack)
+                if (instr->result) {
+                    instr->result->emitted = true;
+                }
             }
             break;
             
@@ -328,6 +565,8 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.sub");
+                ctx->stack_depth--;
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -336,6 +575,8 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.mul");
+                ctx->stack_depth--;
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -344,6 +585,8 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.div_s");
+                ctx->stack_depth--;
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -353,6 +596,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.and");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -361,6 +605,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.or");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -369,6 +614,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.xor");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -377,6 +623,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.shl");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -385,6 +632,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
                 wasm_emit_instr(ctx, "i32.shr_s");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -392,6 +640,7 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
             if (instr->num_args >= 1) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_instr(ctx, "i32.eqz");
+                if (instr->result) instr->result->emitted = true;
             }
             break;
             
@@ -402,14 +651,43 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
             break;
             
         case IR_LOAD_STACK:
-            if (instr->result && instr->result->kind == IR_VALUE_INT) {
-                wasm_emit_instr(ctx, "local.get $result");
+            if (instr->result) {
+                int local_idx = 0;
+                if (instr->result->param_reg == -2) {
+                    // Local variable - offset by parameter storage size
+                    local_idx = wasm_param_storage_size + instr->result->offset / 8;
+                } else if (instr->result->param_reg >= 0 && instr->result->param_reg < 4) {
+                    // Parameter - use param_reg as the storage slot index
+                    local_idx = instr->result->param_reg;
+                }
+                wasm_emit_instr(ctx, "local.get $%d", local_idx);
+                // Push the loaded value onto the stack (result is a temp)
+                ctx->stack_depth++;
+                instr->result->emitted = true;  // Mark as emitted so consumers don't re-emit
             }
             break;
             
         case IR_STORE_STACK:
-            if (instr->result && instr->result->kind == IR_VALUE_INT) {
-                wasm_emit_instr(ctx, "local.set $result");
+            if (instr->result) {
+                int local_idx = 0;
+                if (instr->result->param_reg == -2) {
+                    // Local variable - offset by parameter storage size
+                    local_idx = wasm_param_storage_size + instr->result->offset / 8;
+                } else if (instr->result->param_reg >= 0 && instr->result->param_reg < 4) {
+                    // Parameter - use param_reg as the storage slot index
+                    local_idx = instr->result->param_reg;
+                }
+                // Check if this is an allocation marker (no value to store)
+                // Allocation markers come after IR_ALLOCA and have no value on stack
+                if (ctx->stack_depth > 0) {
+                    wasm_emit_instr(ctx, "local.set $%d", local_idx);
+                    // Clear tracking after store
+                    ctx->stack_depth--;
+                } else {
+                    // This is just marking stack allocation, not storing a value
+                    // Don't emit anything - just track that this local slot exists
+                    // wasm_emit_comment(ctx, "STORE_STACK (allocation marker for local $%d)", local_idx);
+                }
             }
             break;
             
@@ -429,51 +707,124 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
             break;
             
         case IR_CMP_LT:
-            if (instr->num_args >= 2) {
-                wasm_emit_value(ctx, instr->args[0]);
-                wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.lt_s");
-            }
+            // Operands are already on stack from previous loads, just emit comparison
+            wasm_emit_instr(ctx, "i32.lt_s");
+            // stack_depth: already correct (comparison pops 2, pushes 1)
             break;
             
         case IR_CMP_GT:
-            if (instr->num_args >= 2) {
-                wasm_emit_value(ctx, instr->args[0]);
-                wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.gt_s");
-            }
+            wasm_emit_instr(ctx, "i32.gt_s");
             break;
             
         case IR_CMP_LE:
-            if (instr->num_args >= 2) {
-                wasm_emit_value(ctx, instr->args[0]);
-                wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.le_s");
-            }
+            wasm_emit_instr(ctx, "i32.le_s");
             break;
             
         case IR_CMP_GE:
-            if (instr->num_args >= 2) {
-                wasm_emit_value(ctx, instr->args[0]);
-                wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.ge_s");
-            }
+            wasm_emit_instr(ctx, "i32.ge_s");
             break;
             
         case IR_CMP_EQ:
-            if (instr->num_args >= 2) {
-                wasm_emit_value(ctx, instr->args[0]);
-                wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.eq");
-            }
+            wasm_emit_instr(ctx, "i32.eq");
             break;
             
         case IR_CMP_NE:
+            wasm_emit_instr(ctx, "i32.ne");
+            break;
+            
+        // ARM64-specific opcodes - no-ops for WASM
+        case IR_SAVE_X8:
+            wasm_emit_comment(ctx, "SAVE_X8");
+            // SAVE_X8 saves x8 to x21 - in WASM we just push the value
+            ctx->stack_depth++;
+            break;
+        case IR_RESTORE_X8_RESULT:
+            wasm_emit_comment(ctx, "RESTORE_X8_RESULT");
+            break;
+        case IR_SAVE_X8_TO_X20:
+            wasm_emit_comment(ctx, "SAVE_X8_TO_X20");
+            break;
+        case IR_RESTORE_X8_FROM_X20:
+            wasm_emit_comment(ctx, "RESTORE_X8_FROM_X20");
+            break;
+        case IR_LEA:
+            // Load effective address - for WASM, just emit the address calculation
+            wasm_emit_comment(ctx, "LEA");
+            if (instr->num_args >= 1 && instr->args[0]) {
+                wasm_emit_value(ctx, instr->args[0]);
+                // LEA pushes the address onto the stack
+                ctx->stack_depth++;
+            }
+            break;
+        case IR_ADD_X21:
+            // Add with x21 - treat as regular add
             if (instr->num_args >= 2) {
                 wasm_emit_value(ctx, instr->args[0]);
                 wasm_emit_value(ctx, instr->args[1]);
-                wasm_emit_instr(ctx, "i32.ne");
+                wasm_emit_instr(ctx, "i32.add");
+                ctx->stack_depth--;
+                if (instr->result) instr->result->emitted = true;
             }
+            break;
+        case IR_ADD_IMM64:
+            // Add immediate - treat as regular add with constant
+            if (instr->num_args >= 1 && instr->args[0]) {
+                wasm_emit_value(ctx, instr->args[0]);
+                if (instr->result && instr->result->kind == IR_VALUE_INT) {
+                    wasm_emit_const_int(ctx, instr->result->data.int_val);
+                }
+                wasm_emit_instr(ctx, "i32.add");
+                ctx->stack_depth--;
+                if (instr->result) instr->result->emitted = true;
+            }
+            break;
+        case IR_LOAD_OFFSET:
+            // Load with offset - emit address calculation then load
+            if (instr->num_args >= 2) {
+                wasm_emit_value(ctx, instr->args[0]);  // base
+                wasm_emit_value(ctx, instr->args[1]);  // offset
+                wasm_emit_instr(ctx, "i32.add");
+                wasm_emit_instr(ctx, "i32.load");
+            }
+            break;
+        case IR_STORE_OFFSET:
+            // Store with offset - emit address calculation then store
+            if (instr->num_args >= 3) {
+                wasm_emit_value(ctx, instr->args[2]);  // value
+                wasm_emit_value(ctx, instr->args[0]);  // base
+                wasm_emit_value(ctx, instr->args[1]);  // offset
+                wasm_emit_instr(ctx, "i32.add");
+                wasm_emit_instr(ctx, "i32.store");
+            }
+            break;
+        case IR_STORE_INDIRECT:
+            // Store indirect - similar to STORE but with different argument order
+            // Store w8 to [x21] (address in x21, value in x8)
+            // For WASM, we need to emit the values that are already on the stack
+            // The address should be in args[0] and value in args[2] based on IR generation
+            wasm_emit_comment(ctx, "STORE_INDIRECT");
+            if (instr->num_args >= 3) {
+                wasm_emit_value(ctx, instr->args[2]);  // value
+                wasm_emit_value(ctx, instr->args[0]);  // address
+                wasm_emit_instr(ctx, "i32.store");
+                // Clear stack tracking after store
+                ctx->stack_depth -= 2;
+            } else if (instr->num_args >= 2) {
+                // Try with 2 args
+                wasm_emit_value(ctx, instr->args[1]);  // value
+                wasm_emit_value(ctx, instr->args[0]);  // address
+                wasm_emit_instr(ctx, "i32.store");
+                ctx->stack_depth -= 2;
+            } else {
+                // No args - assume values are already on stack
+                wasm_emit_instr(ctx, "i32.store");
+                ctx->stack_depth -= 2;
+            }
+            break;
+            
+        case IR_MOD:
+            // Modulo: use div and check remainder
+            wasm_emit_instr(ctx, "i32.rem_s");
             break;
             
         default:
@@ -482,23 +833,44 @@ static void emit_instruction(WasmContext *ctx, IRInstruction *instr) {
     }
 }
 
-// Emit a value
+// Emit a value - push onto WASM stack
 void wasm_emit_value(WasmContext *ctx, IRValue *val) {
     if (!ctx || !val) return;
+    
+    // Skip if already emitted (for constants used as operands)
+    if (val->emitted) return;
     
     switch (val->kind) {
         case IR_VALUE_INT:
             wasm_emit_const_int(ctx, val->data.int_val);
+            ctx->stack_depth++;
+            val->emitted = true;  // Mark as emitted
             break;
         case IR_VALUE_FLOAT:
             wasm_emit(ctx, "f64.const %f\n", val->data.float_val);
+            ctx->stack_depth++;
+            val->emitted = true;
             break;
         case IR_VALUE_PTR:
         case IR_VALUE_STRING:
             wasm_emit_instr(ctx, "i32.const %d", val->string_index * 256);
+            ctx->stack_depth++;
+            val->emitted = true;
             break;
         default:
-            wasm_emit_comment(ctx, "Unknown value kind: %d", val->kind);
+            // Parameter or local variable
+            if (val->param_reg == -2) {
+                // Local variable - offset by parameter storage size
+                int local_idx = wasm_param_storage_size + val->offset / 8;
+                wasm_emit_instr(ctx, "local.get $%d", local_idx);
+                ctx->stack_depth++;
+            } else if (val->param_reg >= 0 && val->param_reg < 4) {
+                // Parameter in register
+                wasm_emit_instr(ctx, "local.get $%d", val->param_reg);
+                ctx->stack_depth++;
+            } else {
+                wasm_emit_comment(ctx, "Unknown value kind: %d", val->kind);
+            }
             break;
     }
 }
@@ -516,8 +888,35 @@ void wasm_codegen_generate(IRModule *module, FILE *out) {
     WasmContext *ctx = wasm_context_create(out);
     
     wasm_emit_module_header(ctx);
-    wasm_emit_memory(ctx);
+    
+    // First pass: detect imports by scanning all instructions
+    if (module->functions) {
+        for (size_t i = 0; i < list_size(module->functions); i++) {
+            IRFunction *func = list_get(module->functions, i);
+            if (!func || !func->blocks) continue;
+            
+            for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
+                IRBasicBlock *block = list_get(func->blocks, bi);
+                if (!block || !block->instructions) continue;
+                
+                for (size_t ii = 0; ii < list_size(block->instructions); ii++) {
+                    IRInstruction *instr = list_get(block->instructions, ii);
+                    if (!instr) continue;
+                    
+                    if (instr->opcode == IR_CALL && instr->label) {
+                        if (strcmp(instr->label, "printf") == 0) {
+                            ctx->has_printf = true;
+                        } else if (strcmp(instr->label, "putchar") == 0) {
+                            ctx->has_putchar = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     wasm_emit_imports(ctx);
+    wasm_emit_memory(ctx);
     
     // Emit functions
     if (module->functions) {

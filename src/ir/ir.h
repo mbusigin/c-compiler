@@ -42,6 +42,7 @@ typedef struct IRValue {
     bool is_temp;     // True if this is a temporary (result of previous instruction)
     bool is_address;  // True if this value is an address (from LEA)
     bool is_pointer;  // True if this value is a pointer (needs 8-byte load/store)
+    bool emitted;     // True if this value has been emitted to WASM stack
     int param_reg;     // For parameters: which register (x0-x3) it's in; -2 = local var
     int offset;        // For local variables: stack offset
 } IRValue;

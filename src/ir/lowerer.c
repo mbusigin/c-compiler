@@ -247,21 +247,23 @@ static IRValue *lower_identifier(ASTNode *node) {
     // Check if this is a parameter
     int param_idx = find_param_index(node->data.identifier.name);
     if (param_idx >= 0) {
-        // Parameters are stored on the stack - need to load the value
-        IRValue *param_val = param_values[param_idx];
-        // Mark as pointer if the type is a pointer
-        if (is_pointer_result(node)) {
-            param_val->is_pointer = true;
-        }
+        // Get the parameter info (location)
+        IRValue *param_loc = param_values[param_idx];
+        
+        // Create a NEW value for the load result (don't reuse param_loc)
+        IRValue *load_result = ir_value_create(IR_VALUE_INT);
+        load_result->is_constant = false;
+        load_result->is_temp = true;
+        load_result->param_reg = param_loc->param_reg;  // Copy param info
+        load_result->offset = param_loc->offset;
+        load_result->is_pointer = is_pointer_result(node);
+        
+        // Create load instruction
         IRInstruction *load_instr = ir_instr_create(IR_LOAD_STACK);
-        load_instr->result = param_val;
+        load_instr->result = load_result;
         add_instr(load_instr);
-        // Return a temp value that indicates the load happened
-        IRValue *result = ir_value_create(IR_VALUE_INT);
-        result->is_constant = false;
-        result->is_temp = true;
-        result->is_pointer = is_pointer_result(node);
-        return result;
+        
+        return load_result;  // Return the newly created result
     }
     
     // Check if this is a local variable
@@ -329,6 +331,7 @@ static IRValue *lower_binary_expr(ASTNode *node) {
         // Store the temp to stack
         IRValue *store_result = ir_value_create(IR_VALUE_INT);
         store_result->offset = temp_slot;
+        store_result->param_reg = -2;  // Mark as local variable
         IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
         store_i->result = store_result;
         add_instr(store_i);
@@ -424,6 +427,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             if (lv) {
                 IRValue *store_result = ir_value_create(IR_VALUE_INT);
                 store_result->offset = lv->offset;
+                store_result->param_reg = -2;  // Mark as local variable
                 IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
                 store_i->result = store_result;
                 add_instr(store_i);
@@ -452,6 +456,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             if (lv) {
                 IRValue *store_result = ir_value_create(IR_VALUE_INT);
                 store_result->offset = lv->offset;
+                store_result->param_reg = -2;  // Mark as local variable
                 IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
                 store_i->result = store_result;
                 add_instr(store_i);
@@ -509,6 +514,7 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             if (lv) {
                 IRValue *store_result = ir_value_create(IR_VALUE_INT);
                 store_result->offset = lv->offset;
+                store_result->param_reg = -2;  // Mark as local variable
                 IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
                 store_i->result = store_result;
                 add_instr(store_i);
@@ -815,6 +821,7 @@ static void lower_variable_decl(ASTNode *node) {
         // Store value to [sp, #offset] using IR_STORE_STACK
         IRValue *result = ir_value_create(IR_VALUE_INT);
         result->offset = var_offset;
+        result->param_reg = -2;  // Mark as local variable, not parameter
         IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
         store_i->result = result;
         add_instr(store_i);
@@ -1534,10 +1541,12 @@ static void lower_function(ASTNode *node) {
             locals_add(param->data.parameter.name, param_offset, 0);  // Parameters are not arrays
             
             // Create IRValue pointing to the stack slot
+            // For WASM: param_reg should be the parameter number (0, 1, 2, 3)
+            // For ARM64: param_reg = -2 means stack-relative (after storing param to stack)
             IRValue *param_val = ir_value_create(IR_VALUE_INT);
             param_val->is_constant = false;
             param_val->is_temp = false;
-            param_val->param_reg = -2;  // Mark as stack-relative
+            param_val->param_reg = param_count;  // Store parameter number for WASM backend
             param_val->offset = param_offset;
             param_values[param_count] = param_val;
             param_names[param_count] = xstrdup(param->data.parameter.name);

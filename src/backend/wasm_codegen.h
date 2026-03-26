@@ -19,6 +19,10 @@ typedef struct WasmContext {
     int memory_pages;
     bool has_printf;
     bool has_putchar;
+    // Track stack depth for value emission
+    int stack_depth;
+    // Track if last instruction was a comparison (result already on stack)
+    bool last_was_cmp;
 } WasmContext;
 
 // Main entry point - generate WAT from IR module

@@ -213,8 +213,18 @@ test-wasm: $(COMPILER) $(BUILD_DIR)
 	for src in $(TEST_DIR)/wasm/wasm_test_cmp.c $(TEST_DIR)/wasm/wasm_test_loop.c $(TEST_DIR)/wasm/wasm_test_memory.c; do \
 		if [ -f "$$src" ]; then \
 			name=$$(basename $$src .c); \
+			wat_file="$(BUILD_DIR)/$${name}.wat"; \
+			wasm_file="$(BUILD_DIR)/$${name}.wasm"; \
 			echo -n "Testing $$name... "; \
-			echo "[SKIP] (needs value stack fixes)"; skipped=$$((skipped + 1)); \
+			if ./$(COMPILER) --target=wasm $$src -o "$$wat_file" 2>/dev/null; then \
+				if wat2wasm "$$wat_file" -o "$$wasm_file" 2>/dev/null; then \
+					echo "[PASS] (valid WASM)"; passed=$$((passed + 1)); \
+				else \
+					echo "[FAIL] (wat2wasm validation failed)"; failed=$$((failed + 1)); \
+				fi; \
+			else \
+				echo "[FAIL] (compilation failed)"; failed=$$((failed + 1)); \
+			fi; \
 		fi; \
 	done; \
 	echo ""; \
