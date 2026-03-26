@@ -2,6 +2,11 @@
 # Self-hosting test script for C compiler
 # Tests the compiler's ability to compile its own source code
 # For full bootstrap verification, see scripts/bootstrap.sh
+#
+# Known limitations:
+# - Missing SEEK_END, SEEK_SET, EOF macros (need stdio.h defines)
+# - No object file output (-c flag only does syntax checking)
+# - Linking requires external tools
 
 set -e
 
