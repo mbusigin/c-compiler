@@ -50,3 +50,22 @@ rm -rf "$OUTPUT_DIR"
 
 echo "Bootstrap verification complete"
 echo "PASS: Bootstrap script ran successfully"
+
+# Test WASM execution if wasmtime is available
+if command -v wasmtime &> /dev/null; then
+    echo ""
+    echo "=== WASM Execution Test ==="
+    for test in tests/wasm/wasm_test_simple_var.c; do
+        if [ -f "$test" ]; then
+            name=$(basename "$test")
+            if ./compiler --target=wasm "$test" -o /tmp/test.wat 2>/dev/null && \
+               wat2wasm /tmp/test.wat -o /tmp/test.wasm 2>/dev/null; then
+                result=$(wasmtime --invoke main /tmp/test.wasm 2>&1 || echo "failed")
+                echo "  $name: $result"
+            fi
+        fi
+    done
+else
+    echo ""
+    echo "Note: wasmtime not installed - skipping WASM execution tests"
+fi
