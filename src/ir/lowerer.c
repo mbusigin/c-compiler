@@ -636,6 +636,7 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
             // Store result to [sp, #offset] using IR_STORE_STACK
             IRValue *store_result = ir_value_create(IR_VALUE_INT);
             store_result->offset = lv->offset;
+            store_result->param_reg = -2;  // Mark as local variable
             IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
             store_i->result = store_result;
             add_instr(store_i);
