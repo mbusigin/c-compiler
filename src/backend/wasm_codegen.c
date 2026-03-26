@@ -23,9 +23,16 @@ static LocalVar local_vars[MAX_LOCALS];
 static int local_var_count = 0;
 static int next_local_index = 0;  // Will be set to param_count + 1
 
+// Static temp local indices for ARM64 IR instruction handling
+static int temp_local_for_save_x8 = -1;
+static int temp_local_for_x20 = -1;
+
 static void reset_local_vars(int param_count) {
     local_var_count = 0;
     next_local_index = param_count;  // Start locals after parameters
+    // Reset temp locals for new function
+    temp_local_for_save_x8 = -1;
+    temp_local_for_x20 = -1;
 }
 
 static int get_or_create_local(int offset) {
@@ -335,6 +342,7 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
         case IR_LOAD:
             if (instr->num_args > 0) emit_value(ctx, instr->args[0]);
             wasm_emit_instr(ctx, "i32.load");
+            if (instr->result) instr->result->emitted = true;  // Mark result as on stack
             break;
             
         case IR_STORE:
@@ -401,21 +409,18 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
         case IR_SAVE_X8:
             // Save the current value on stack to a temp local WITHOUT popping
             // Uses local.tee which saves the value and leaves it on stack
-            {
-                static int temp_local = -1;
-                if (temp_local < 0) temp_local = get_or_create_local(9999);  // Use offset 9999 for temp
-                wasm_emit_instr(ctx, "local.tee $%d", temp_local);
-            }
+            if (temp_local_for_save_x8 < 0) temp_local_for_save_x8 = get_or_create_local(9999);
+            wasm_emit_instr(ctx, "local.tee $%d", temp_local_for_save_x8);
             break;
 
         case IR_ADD_X21:
-            // Add the saved value (x21) to the current value (x8)
-            {
-                static int temp_local = -1;
-                if (temp_local < 0) temp_local = get_or_create_local(9999);
-                wasm_emit_instr(ctx, "local.get $%d", temp_local);
-                wasm_emit_instr(ctx, "i32.add");
-            }
+            // Add the saved value (x20 or x21) to the current value (x8)
+            // This is used to add a saved pointer to an offset
+            // Note: In the current IR generation, SAVE_X8_TO_X20 saves the pointer,
+            // and ADD_X21 is used to add it to the offset
+            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
+            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_x20);
+            wasm_emit_instr(ctx, "i32.add");
             break;
 
         case IR_STORE_INDIRECT:
@@ -428,11 +433,21 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
         case IR_RESTORE_X8_RESULT:
             // Restore the saved value (x22) to the stack
             // This is used for post-increment/decrement to return the original value
-            {
-                static int temp_local = -1;
-                if (temp_local < 0) temp_local = get_or_create_local(9999);
-                wasm_emit_instr(ctx, "local.get $%d", temp_local);
-            }
+            if (temp_local_for_save_x8 < 0) temp_local_for_save_x8 = get_or_create_local(9999);
+            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_save_x8);
+            break;
+
+        case IR_SAVE_X8_TO_X20:
+            // Save the current value to a second temp local (x20)
+            // Used for preserving pointer values across function calls
+            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
+            wasm_emit_instr(ctx, "local.tee $%d", temp_local_for_x20);
+            break;
+
+        case IR_RESTORE_X8_FROM_X20:
+            // Restore the saved value from x20
+            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
+            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_x20);
             break;
 
         case IR_LEA:

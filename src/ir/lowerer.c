@@ -1032,11 +1032,40 @@ static IRValue *lower_expression(ASTNode *node) {
             return lower_expression(node->data.cast.operand);
 
         case AST_ARRAY_SUBSCRIPT_EXPR: {
-            // table[i] - load from table + i*8 (for pointer arrays)
+            // table[i] - load from table + i*element_size
             // Strategy: compute index first, then load pointer, then compute address and load
             ASTNode *base_node = node->data.subscript.array;
             ASTNode *index_node = node->data.subscript.index;
             bool result_is_pointer = is_pointer_result(node);
+            
+            // Determine element size from base type
+            int elem_size = 4;  // Default to int size
+            if (base_node && base_node->type_info) {
+                Type *base_type = base_node->type_info;
+                if (base_type->kind == TYPE_POINTER && base_type->base) {
+                    // Pointer type: element size is size of pointed-to type
+                    switch (base_type->base->kind) {
+                        case TYPE_CHAR: elem_size = 1; break;
+                        case TYPE_SHORT: elem_size = 2; break;
+                        case TYPE_INT: elem_size = 4; break;
+                        case TYPE_LONG:
+                        case TYPE_LONGLONG: elem_size = 8; break;
+                        case TYPE_POINTER: elem_size = 8; break;
+                        default: elem_size = 4; break;
+                    }
+                } else if (base_type->kind == TYPE_ARRAY && base_type->base) {
+                    // Array type: element size is size of element type
+                    switch (base_type->base->kind) {
+                        case TYPE_CHAR: elem_size = 1; break;
+                        case TYPE_SHORT: elem_size = 2; break;
+                        case TYPE_INT: elem_size = 4; break;
+                        case TYPE_LONG:
+                        case TYPE_LONGLONG: elem_size = 8; break;
+                        case TYPE_POINTER: elem_size = 8; break;
+                        default: elem_size = 4; break;
+                    }
+                }
+            }
             
             if (base_node && base_node->type == AST_IDENTIFIER_EXPR) {
                 const char *base_name = base_node->data.identifier.name;
@@ -1058,9 +1087,9 @@ static IRValue *lower_expression(ASTNode *node) {
                     // Evaluate index (clobbers x8)
                     IRValue *index_val = lower_expression(index_node);
                     
-                    // Scale index by 8 (sizeof pointer))
+                    // Scale index by element size
                     IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                    scale_val->data.int_val = 8;
+                    scale_val->data.int_val = elem_size;
                     scale_val->is_constant = true;
                     IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                     scale_instr->result = scale_val;
