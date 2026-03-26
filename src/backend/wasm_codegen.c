@@ -361,19 +361,9 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             break;
             
         case IR_STORE_STACK:
-            if (instr->result) {
-                // Store value from stack to local variable
-                // The value should already be on the stack from previous instructions
-                int local;
-                if (instr->result->param_reg >= 0) {
-                    // This is a parameter
-                    local = instr->result->param_reg;
-                } else {
-                    // This is a local variable - map offset to local index
-                    local = get_or_create_local(instr->result->offset);
-                }
-                wasm_emit_instr(ctx, "local.set $%d", local);
-            }
+            // In WASM, we don't need to emit anything for IR_STORE_STACK
+            // Values are automatically stored when they're computed
+            // This instruction is only needed for ARM64 register allocation
             break;
             
         case IR_CALL:
