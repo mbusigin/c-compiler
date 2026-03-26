@@ -1,6 +1,7 @@
 #!/bin/bash
 # Self-hosting test script for C compiler
 # Tests the compiler's ability to compile its own source code
+# For full bootstrap verification, see scripts/bootstrap.sh
 
 set -e
 
