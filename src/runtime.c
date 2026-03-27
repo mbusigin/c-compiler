@@ -10,6 +10,12 @@
 // These are typically provided by libgcc or compiler-rt
 // For bootstrap purposes, we provide minimal implementations
 
+// Global variables needed by the compiler itself when it compiles itself
+// These are file-scope variables that the compiler can't yet emit
+int x8_temp_type = 0;
+int x9_temp_type = 0;
+int wasm_stack_ptr = 65536;
+
 // The compiler generates calls to ___builtin_va_* 
 // These are the names the linker expects (with leading underscores)
 

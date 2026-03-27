@@ -297,7 +297,25 @@ static IRValue *lower_identifier(ASTNode *node) {
         return result;
     }
     
-    // For non-parameters and non-variables, create a dummy value
+    // Check if it's a function symbol - functions decay to function pointers
+    Symbol *sym = symtab_lookup(current_symtab, node->data.identifier.name);
+    if (sym && sym->kind == SYMBOL_FUNCTION) {
+        // Function name used as value - this is a function pointer
+        // Load the function address using a special IR instruction
+        IRValue *result = ir_value_create(IR_VALUE_INT);
+        result->is_constant = false;
+        result->is_temp = true;
+        result->is_pointer = true;  // Function pointer
+        
+        // Create IR_LOAD_FUNC_ADDR instruction to load function address
+        IRInstruction *load_instr = ir_instr_create(IR_LOAD_FUNC_ADDR);
+        load_instr->result = result;
+        load_instr->label = node->data.identifier.name;  // Store function name
+        add_instr(load_instr);
+        return result;
+    }
+    
+    // For non-parameters, non-variables, and non-functions, create a dummy value
     IRValue *result = ir_value_create(IR_VALUE_INT);
     result->is_constant = false;
     result->is_temp = false;
@@ -794,9 +812,10 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
 static void lower_variable_decl(ASTNode *node) {
     if (!node || node->type != AST_VARIABLE_DECL) return;
     
-    // Check if this is an array (type is pointer to something)
+    // Check if this is an array (type is TYPE_ARRAY, not TYPE_POINTER)
+    // Note: TYPE_POINTER is for pointer variables like "int *p", not arrays
     int is_array = (node->data.variable.var_type && 
-                    node->data.variable.var_type->kind == TYPE_POINTER);
+                    node->data.variable.var_type->kind == TYPE_ARRAY);
     
     // Allocate 8 bytes on stack
     // Layout: [local at sp+0, sp+8...][saved fp/lr above at sp+locals_size]
@@ -882,15 +901,61 @@ static void lower_variable_decl(ASTNode *node) {
 static IRValue *lower_call_expr(ASTNode *node) {
     IRValue *result = ir_value_create(IR_VALUE_INT);
     result->is_temp = true;  // Mark result as temp immediately
-    IRInstruction *instr = ir_instr_create(IR_CALL);
-    instr->result = result;
-
+    
+    // Check if this is a direct call or an indirect call through a function pointer
+    bool is_indirect_call = false;
+    
     if (node->data.call.callee && node->data.call.callee->type == AST_IDENTIFIER_EXPR) {
-        instr->label = node->data.call.callee->data.identifier.name;
+        const char *name = node->data.call.callee->data.identifier.name;
+        
+        // First check if it's a local variable (function pointer)
+        LocalVar *lv = locals_lookup(name);
+        if (lv && node->data.call.callee->type_info) {
+            Type *t = node->data.call.callee->type_info;
+            // Check if the type is a pointer to function
+            if (t && t->kind == TYPE_POINTER && t->base && t->base->kind == TYPE_FUNCTION) {
+                is_indirect_call = true;
+            }
+        } else {
+            // Check symbol table for parameters and global symbols
+            Symbol *callee_sym = symtab_lookup(current_symtab, name);
+            
+            // Check if this is a function pointer (variable or parameter)
+            if (callee_sym && (callee_sym->kind == SYMBOL_VARIABLE || callee_sym->kind == SYMBOL_PARAMETER)) {
+                // Check if the type is a pointer to function
+                Type *t = callee_sym->type;
+                if (t && t->kind == TYPE_POINTER && t->base && t->base->kind == TYPE_FUNCTION) {
+                    is_indirect_call = true;
+                }
+            }
+        }
     }
+    
+    IRInstruction *instr;
+    if (is_indirect_call) {
+        // For indirect calls, load the function pointer into a value
+        instr = ir_instr_create(IR_CALL_INDIRECT);
+        IRValue *func_ptr = lower_identifier(node->data.call.callee);
+        // The function pointer will be in the first arg slot (loaded into x0 by backend)
+        instr->args[0] = func_ptr;
+        instr->num_args = 1;
+    } else {
+        // Direct call
+        instr = ir_instr_create(IR_CALL);
+        if (node->data.call.callee && node->data.call.callee->type == AST_IDENTIFIER_EXPR) {
+            instr->label = node->data.call.callee->data.identifier.name;
+        }
+    }
+    
+    instr->result = result;
 
     // Track temps that need to be saved to stack
     int temp_slot = -1;
+    
+    // For indirect calls, args start at index 1 (index 0 is the function pointer)
+    // For direct calls, args start at index 0
+    int arg_start_idx = is_indirect_call ? 1 : 0;
+    int max_args = is_indirect_call ? 3 : 4;  // x1-x3 for indirect, x0-x3 for direct
     
     for (size_t i = 0; i < list_size(node->data.call.args); i++) {
         IRValue *arg = lower_expression(list_get(node->data.call.args, i));
@@ -939,7 +1004,7 @@ static IRValue *lower_call_expr(ASTNode *node) {
             add_instr(alloc_instr);
         }
         
-        if (instr->num_args < 4) {
+        if (instr->num_args < arg_start_idx + max_args) {
             instr->args[instr->num_args++] = arg;
         }
     }

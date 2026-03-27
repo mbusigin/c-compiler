@@ -983,12 +983,31 @@ static ASTNode *parse_declaration(Parser *p) {
         return ast_create(AST_NULL_STMT);
     }
     
-    // Handle static keyword
+    // Handle storage class specifiers and function specifiers
     bool is_static = false;
+    bool is_inline = false;
+    
+    // Handle inline keyword (can appear before or after static)
+    if (check_p(p, TOKEN_INLINE)) {
+        advance_p(p); // consume 'inline'
+        is_inline = true;
+    }
+    
+    // Handle static keyword
     if (check_p(p, TOKEN_STATIC)) {
         advance_p(p); // consume 'static'
         is_static = true;
-        // Continue parsing the declaration after 'static'
+        // Handle inline after static: static inline
+        if (check_p(p, TOKEN_INLINE)) {
+            advance_p(p); // consume 'inline'
+            is_inline = true;
+        }
+    }
+    
+    // Skip inline if it appears again (e.g., inline static - non-standard but handle it)
+    if (!is_inline && check_p(p, TOKEN_INLINE)) {
+        advance_p(p); // consume 'inline'
+        is_inline = true;
     }
     
     // Handle typedef
@@ -1158,10 +1177,13 @@ static ASTNode *parse_declaration(Parser *p) {
                     }
                     
                     // Function pointer type is complete
+                    // IMPORTANT: A function pointer is a POINTER to a FUNCTION type
+                    Type *func_ptr_type = type_pointer(func_type);
+                    
                     // This is a variable declaration with function pointer type
                     // Check for initializer or semicolon
                     ASTNode *decl = ast_create(AST_VARIABLE_DECL);
-                    decl->data.variable.var_type = func_type;
+                    decl->data.variable.var_type = func_ptr_type;
                     decl->data.variable.name = name;
                     decl->data.variable.init = NULL;
                     

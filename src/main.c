@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
         } else if (argv[i][0] != '-') {
             options.input_file = argv[i];
         } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            // fprintf(stderr, "Unknown option: %s\n", argv[i]);
             show_usage();
             return 1;
         }

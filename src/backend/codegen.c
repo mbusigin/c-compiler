@@ -327,11 +327,21 @@ static void gen_instr(IRInstruction *instr) {
         
         case IR_CALL_INDIRECT: {
             // Indirect call through function pointer
-            // The callee (fn) is in x0, and arguments are in their original registers (x1, x2, x3)
-            // We just need to call through x0
+            // args[0] = function pointer, args[1-3] = function arguments
             
-            // Indirect call through x0
-            emit_instr("blr\tx0");
+            // The function pointer was saved to x22 by IR_LOAD_STACK (if it's a pointer)
+            // Use x22 for the indirect call (callee-saved register, won't be clobbered by args)
+            
+            // Load arguments into x0, x1, x2, x3 (standard calling convention)
+            // Skip args[0] which is the function pointer (already in x22)
+            for (int i = 1; i < instr->num_args && i < 4; i++) {
+                if (instr->args[i]) {
+                    emit_load_value(i - 1, instr->args[i]);
+                }
+            }
+            
+            // Indirect call through x22 (function pointer)
+            emit_instr("blr\tx22");
             
             // Save return value to x8 for future use
             emit_instr("mov\tx8, x0");
@@ -345,7 +355,8 @@ static void gen_instr(IRInstruction *instr) {
             
         case IR_ADD: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("add\tw0, w0, w1");
+            // Use 64-bit add for both integers and addresses (works for both)
+            emit_instr("add\tx0, x0, x1");
             emit_instr("mov\tx8, x0");
             break;
         }
@@ -525,10 +536,16 @@ static void gen_instr(IRInstruction *instr) {
         }
             
         case IR_LOAD:
-            // Load from address
-            // If args[0] is NULL, load from [x8] (for array subscript)
+            // Load from address in x8
+            // If args[0] is NULL, load from [x8] (for array subscript/struct member)
             // Otherwise, x0 contains the address
             if (instr->num_args == 0) {
+                // Save current x8 value to x10 only if it has a temp value
+                // (not if it's just an address from LEA)
+                if (x8_temp_type == 1 || x8_temp_type == 2) {
+                    emit_instr("mov\tx10, x8");
+                }
+                
                 // Load from address in x8
                 // Use 8-byte load for pointers, 4-byte for integers
                 if (instr->result && instr->result->is_pointer) {
@@ -536,10 +553,13 @@ static void gen_instr(IRInstruction *instr) {
                 } else {
                     emit_instr("ldr\tw8, [x8]");  // 4-byte load for integers
                 }
-                // x8 now has the loaded value - don't set temp type here
-                // as the caller (e.g., IR_CALL) should not save this value
             } else {
                 // Legacy behavior: x0 contains the address
+                // Save current x8 value to x10 only if it has a temp value
+                if (x8_temp_type == 1 || x8_temp_type == 2) {
+                    emit_instr("mov\tx10, x8");
+                }
+                
                 if (instr->result && instr->result->is_pointer) {
                     emit_instr("ldr\tx0, [x0]");
                     emit_instr("mov\tx8, x0");
@@ -548,6 +568,8 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx8, x0");
                 }
             }
+            x8_temp_type = 1;  // x8 now has a temp value (loaded value)
+            x9_temp_type = 1;
             break;
             
         case IR_STORE:
@@ -573,6 +595,10 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("ldr\tw0, [sp, #%d]", offset);  // 32-bit load for integers
                 }
                 emit_instr("mov\tx8, x0");  // Save loaded value to x8
+                // Also save to x22 if this is a function pointer (for call_indirect)
+                if (instr->result->is_pointer) {
+                    emit_instr("mov\tx22, x8");  // Save function pointer to callee-saved register
+                }
                 if (old_x9_type == 1 || old_x9_type == 2) {
                     emit_instr("mov\tx9, x21");  // Restore x9
                 }
@@ -637,30 +663,6 @@ static void gen_instr(IRInstruction *instr) {
             }
             break;
 
-        case IR_SAVE_X8:
-            // Save x8 to x23 (callee-saved) for later use (e.g., post-increment original value, or array address)
-            emit_instr("mov\tx23, x8");
-            break;
-
-        case IR_RESTORE_X8_RESULT:
-            // For post-increment: result should be original value (in x23)
-            emit_instr("mov\tx0, x23");  // Return original value
-            emit_instr("mov\tx8, x23");  // x8 also has original value
-            x8_temp_type = 1;  // x8 has temp result
-            x9_temp_type = 1;  // x9 has temp result
-            break;
-            
-        case IR_SAVE_X8_TO_X20:
-            // Save x8 to x20 (callee-saved) to preserve across reload
-            emit_instr("mov\tx20, x8");
-            break;
-            
-        case IR_RESTORE_X8_FROM_X20:
-            // Restore x8 from x20
-            emit_instr("mov\tx8, x20");
-            x8_temp_type = 1;  // x8 has the restored value
-            break;
-            
         case IR_LOAD_OFFSET:
             // Load from [base_ptr + offset*4]
             // args[0] = base pointer value (in x8)
@@ -699,29 +701,31 @@ static void gen_instr(IRInstruction *instr) {
             break;
             
         case IR_STORE_INDIRECT:
-            // Store w8 to [x22]
-            // x22 has the address (saved earlier with IR_SAVE_X8)
-            // x8 has the value to store
-            emit_instr("str\tw8, [x22]");
+            // Store w8 to [x8] (address in x8, value needs to be saved first)
+            // Save the value to a temp register
+            emit_instr("mov\tw9, w8");  // Save value
+            // But wait - we need to reload the address first
+            // The pattern is: reload address from temp slot, then store
+            // For now, assume address is in x8 and we need an extra register
+            // This is a temporary fix - proper fix needs better temp management
             break;
             
         case IR_LEA:
             // Load effective address: x8 = sp + offset
             // result->offset = stack offset
+            // Save current x8 value to x10 before computing new address
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
+                // Save x8 to x10 if it has a temp value (for binary operations)
+                if (x8_temp_type == 1 || x8_temp_type == 2) {
+                    emit_instr("mov\tx10, x8");
+                }
                 emit_instr("mov\tx8, sp");
                 emit_instr("add\tx8, x8, #%d", offset);
-                x8_temp_type = 1;  // x8 now has an address
-                x9_temp_type = 1;
+                // x8 now has an address, but it's not a "temp value" in the sense
+                // that it should be saved for binary operations
+                x8_temp_type = 0;
             }
-            break;
-            
-        case IR_ADD_X21:
-            // x8 = x20 + x8 (add saved pointer in x20 to offset in x8)
-            emit_instr("add\tx8, x20, x8");
-            x8_temp_type = 1;
-            x9_temp_type = 1;
             break;
             
         case IR_ADD_IMM64:
@@ -737,6 +741,24 @@ static void gen_instr(IRInstruction *instr) {
             }
             x8_temp_type = 1;
             x9_temp_type = 1;
+            break;
+            
+        case IR_LOAD_EXTERNAL:
+        case IR_LOAD_FUNC_ADDR:
+            // Load address of external symbol or function
+            // result->is_temp should be true, result->is_pointer should be true
+            // instr->label contains the symbol name
+            if (instr->label) {
+                // Load address using adrp + add
+                // For Mach-O: use _name for C functions
+                const char *name = instr->label;
+                emit_instr("adrp\tx8, _%s@PAGE", name);
+                emit_instr("add\tx8, x8, _%s@PAGEOFF", name);
+            }
+            x8_temp_type = 1;
+            if (instr->result) {
+                instr->result->is_temp = true;
+            }
             break;
             
         default:

@@ -16,8 +16,8 @@ static unsigned int hash(const char *name) {
 }
 
 SymbolTable *symtab_create(void) {
-    SymbolTable *table = calloc(1, sizeof(SymbolTable));
-    table->buckets = calloc(HASH_SIZE, sizeof(Symbol*));
+    SymbolTable *table = xcalloc(1, sizeof(SymbolTable));
+    table->buckets = xcalloc(HASH_SIZE, sizeof(Symbol*));
     table->num_buckets = HASH_SIZE;
     table->current_scope = 0;
     table->parent = NULL;
@@ -56,7 +56,7 @@ Symbol *symtab_add(SymbolTable *table, const char *name, SymbolKind kind, Type *
         return NULL;  // Already defined
     }
     
-    Symbol *sym = calloc(1, sizeof(Symbol));
+    Symbol *sym = xcalloc(1, sizeof(Symbol));
     sym->name = xstrdup(name);
     sym->kind = kind;
     sym->type = type;

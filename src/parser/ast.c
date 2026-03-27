@@ -47,7 +47,7 @@ const char *ast_node_name(ASTNodeType type) {
 }
 
 ASTNode *ast_create(ASTNodeType type) {
-    ASTNode *node = calloc(1, sizeof(ASTNode));
+    ASTNode *node = xcalloc(1, sizeof(ASTNode));
     node->type = type;
     return node;
 }
@@ -333,7 +333,7 @@ const char *type_kind_name(TypeKind kind) {
 }
 
 Type *type_create(TypeKind kind) {
-    Type *t = calloc(1, sizeof(Type));
+    Type *t = xcalloc(1, sizeof(Type));
     t->kind = kind;
     switch (kind) {
         case TYPE_VOID: t->size = 0; break;
@@ -398,7 +398,7 @@ Type *type_copy(Type *t) {
     copy->array_size = t->array_size;
     if (t->return_type) copy->return_type = type_copy(t->return_type);
     if (t->param_types && t->num_params > 0) {
-        copy->param_types = malloc(sizeof(Type *) * t->num_params);
+        copy->param_types = xmalloc(sizeof(Type *) * t->num_params);
         for (size_t i = 0; i < t->num_params; i++) {
             copy->param_types[i] = type_copy(t->param_types[i]);
         }
@@ -409,7 +409,7 @@ Type *type_copy(Type *t) {
     if (t->struct_name) copy->struct_name = strdup(t->struct_name);
     if (t->members && t->num_members > 0) {
         copy->member_capacity = t->member_capacity;
-        copy->members = malloc(sizeof(StructMember) * copy->member_capacity);
+        copy->members = xmalloc(sizeof(StructMember) * copy->member_capacity);
         for (size_t i = 0; i < t->num_members; i++) {
             copy->members[i].name = strdup(t->members[i].name);
             copy->members[i].type = t->members[i].type;  // Shallow copy

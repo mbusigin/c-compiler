@@ -13,7 +13,7 @@ void *xmalloc(size_t size) {
     if (size == 0) {
         return NULL;
     }
-    void *ptr = malloc(size);
+    void *ptr = malloc(size);  // Safe wrapper
     if (!ptr) {
         fatal_error("Memory allocation failed (requested %zu bytes)\n", size);
     }
@@ -24,7 +24,7 @@ void *xcalloc(size_t nmemb, size_t size) {
     if (nmemb == 0 || size == 0) {
         return NULL;
     }
-    void *ptr = calloc(nmemb, size);
+    void *ptr = calloc(nmemb, size);  // Safe wrapper
     if (!ptr) {
         fatal_error("Memory allocation failed (requested %zu elements of %zu bytes)\n", 
                     nmemb, size);

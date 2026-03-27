@@ -15,10 +15,11 @@ TEST_DIR = tests
 # Source files
 COMMON_SRC = $(SRC_DIR)/common/util.c $(SRC_DIR)/common/list.c $(SRC_DIR)/common/error.c $(SRC_DIR)/common/test_framework.c
 LEXER_SRC = $(SRC_DIR)/lexer/lexer.c $(SRC_DIR)/lexer/preproc.c
-PARSER_SRC = $(SRC_DIR)/parser/parser.c $(SRC_DIR)/parser/ast.c
+PARSER_SRC = $(SRC_DIR)/parser/parser.c $(SRC_DIR)/parser/ast.c $(SRC_DIR)/parser/parse_utils.c $(SRC_DIR)/parser/parse_type.c $(SRC_DIR)/parser/parse_decl.c $(SRC_DIR)/parser/parse_stmt.c $(SRC_DIR)/parser/parse_expr.c
 SEMA_SRC = $(SRC_DIR)/sema/analyzer.c $(SRC_DIR)/sema/symtab.c
-IR_SRC = $(SRC_DIR)/ir/ir.c $(SRC_DIR)/ir/lowerer.c
+IR_SRC = $(SRC_DIR)/ir/ir.c $(SRC_DIR)/ir/lowerer.c $(SRC_DIR)/ir/lower_expr.c $(SRC_DIR)/ir/lower_stmt.c $(SRC_DIR)/ir/lower_decl.c $(SRC_DIR)/ir/scope.c
 OPT_SRC = $(SRC_DIR)/optimize/optimizer.c $(SRC_DIR)/optimize/constfold.c $(SRC_DIR)/optimize/dce.c
+TARGET_SRC = $(SRC_DIR)/target/target.c $(SRC_DIR)/target/arm64/arm64_target.c $(SRC_DIR)/target/wasm/wasm_target.c
 BACKEND_SRC = $(SRC_DIR)/backend/codegen.c $(SRC_DIR)/backend/regalloc.c $(SRC_DIR)/backend/asm.c $(SRC_DIR)/backend/dwarf.c $(SRC_DIR)/backend/wasm_codegen.c $(SRC_DIR)/backend/wasm_emit.c
 DRIVER_SRC = $(SRC_DIR)/driver.c
 RUNTIME_SRC = $(SRC_DIR)/runtime.c
@@ -27,7 +28,7 @@ RUNTIME_SRC = $(SRC_DIR)/runtime.c
 MAIN_SRC = $(SRC_DIR)/main.c
 
 # All source files (excluding tests)
-ALL_SRC = $(COMMON_SRC) $(LEXER_SRC) $(PARSER_SRC) $(SEMA_SRC) $(IR_SRC) $(OPT_SRC) $(BACKEND_SRC) $(DRIVER_SRC) $(RUNTIME_SRC) $(MAIN_SRC)
+ALL_SRC = $(COMMON_SRC) $(LEXER_SRC) $(PARSER_SRC) $(SEMA_SRC) $(IR_SRC) $(OPT_SRC) $(TARGET_SRC) $(BACKEND_SRC) $(DRIVER_SRC) $(RUNTIME_SRC) $(MAIN_SRC)
 
 # Executable
 COMPILER = $(BIN_DIR)/compiler
@@ -49,7 +50,7 @@ all: info $(COMPILER)
 # Compile the compiler
 $(COMPILER): $(ALL_SRC)
 	$(CC) $(CFLAGS) -o $@ $(ALL_SRC) -lm
-	@echo "Build complete: $(COMPILER)"
+	@echo "Build successful: $(COMPILER)"
 
 # Clean build artifacts
 clean:

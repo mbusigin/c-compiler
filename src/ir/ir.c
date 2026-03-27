@@ -63,6 +63,8 @@ static const char *op_name(IROpcode op) {
         case IR_LEA: return "lea";
         case IR_ADD_X21: return "add_x21";
         case IR_ADD_IMM64: return "add_imm64";
+        case IR_LOAD_EXTERNAL: return "load_external";
+        case IR_LOAD_FUNC_ADDR: return "load_func_addr";
         case IR_SEXT: return "sext";
         case IR_ZEXT: return "zext";
         case IR_TRUNC: return "trunc";
@@ -70,14 +72,17 @@ static const char *op_name(IROpcode op) {
         case IR_FPTOSI: return "fptosi";
         case IR_LOAD_GLOBAL: return "load_global";
         case IR_STORE_GLOBAL: return "store_global";
+        case IR_SAVE_X8_TO_X22: return "save_x8_to_x22";
+        case IR_STORE_INDIRECT_X22: return "store_indirect_x22";
         default: return "unknown";
     }
 }
 
 IRModule *ir_module_create(void) {
-    IRModule *m = calloc(1, sizeof(IRModule));
+    IRModule *m = xcalloc(1, sizeof(IRModule));
     m->functions = list_create();
     m->strings = list_create();
+    m->globals = list_create();
     return m;
 }
 
@@ -85,11 +90,12 @@ void ir_module_destroy(IRModule *m) {
     if (!m) return;
     list_destroy(m->functions);
     list_destroy(m->strings);
+    list_destroy(m->globals);
     free(m);
 }
 
 IRFunction *ir_function_create(const char *name) {
-    IRFunction *f = calloc(1, sizeof(IRFunction));
+    IRFunction *f = xcalloc(1, sizeof(IRFunction));
     f->name = xstrdup(name);
     f->params = list_create();
     f->blocks = list_create();
@@ -98,10 +104,23 @@ IRFunction *ir_function_create(const char *name) {
 }
 
 IRBasicBlock *ir_block_create(const char *name) {
-    IRBasicBlock *b = calloc(1, sizeof(IRBasicBlock));
+    IRBasicBlock *b = xcalloc(1, sizeof(IRBasicBlock));
     b->name = xstrdup(name);
     b->instructions = list_create();
     return b;
+}
+
+IRGlobal *ir_global_create(const char *name, Type *type, IRValue *initializer) {
+    IRGlobal *g = xcalloc(1, sizeof(IRGlobal));
+    g->name = xstrdup(name);
+    g->type = type;
+    g->initializer = initializer;
+    g->is_external = false;
+    return g;
+}
+
+void ir_module_add_global(IRModule *module, IRGlobal *global) {
+    list_push(module->globals, global);
 }
 
 void ir_module_print(const IRModule *m) {

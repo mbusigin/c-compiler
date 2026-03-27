@@ -38,7 +38,6 @@ static bool types_compatible(Type *t1, Type *t2) {
     if (!t1 || !t2) return true;
     
     // Debug logging
-    fprintf(stderr, "DEBUG: types_compatible called: t1=%d, t2=%d\n", t1->kind, t2->kind);
     
     // Same type is always compatible
     if (t1->kind == t2->kind) return true;
@@ -147,7 +146,6 @@ static void analyze_declaration(ASTNode *node) {
                 for (size_t i = 0; i < list_size(node->data.function.params); i++) {
                     ASTNode *param = list_get(node->data.function.params, i);
                     if (param->type == AST_PARAMETER_DECL) {
-                        fprintf(stderr, "DEBUG: Adding param '%s' to symbol table\n", param->data.parameter.name);
                         symtab_add(current_symtab, param->data.parameter.name,
                                   SYMBOL_PARAMETER, param->data.parameter.param_type);
                     }
@@ -276,7 +274,6 @@ static Type *analyze_expression_with_type(ASTNode *node) {
     switch (node->type) {
         case AST_IDENTIFIER_EXPR: {
             Symbol *sym = symtab_lookup(current_symtab, node->data.identifier.name);
-            fprintf(stderr, "DEBUG: Looking up identifier '%s', sym=%p\n", node->data.identifier.name, (void*)sym);
             if (!sym) {
                 error("[%d:%d] undeclared identifier '%s'\n",
                       node->line, node->column, node->data.identifier.name);
@@ -285,7 +282,6 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             sym->is_used = true;
             // Store type info on node
             node->type_info = sym->type;
-            fprintf(stderr, "DEBUG: Set type_info=%p (kind=%d) for '%s'\n", (void*)sym->type, sym->type ? sym->type->kind : -1, node->data.identifier.name);
             return sym->type;
         }
         
@@ -344,7 +340,6 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             if (node->data.call.callee && 
                 node->data.call.callee->type == AST_IDENTIFIER_EXPR) {
                 const char *func_name = node->data.call.callee->data.identifier.name;
-                fprintf(stderr, "DEBUG: Call expr looking up '%s'\n", func_name);
                 sym = symtab_lookup(current_symtab, func_name);
                 if (!sym) {
                     // Auto-declare the function as a convenience
@@ -353,7 +348,6 @@ static Type *analyze_expression_with_type(ASTNode *node) {
                 // Set type_info on the callee for the lowerer
                 if (sym && sym->type) {
                     node->data.call.callee->type_info = sym->type;
-                    fprintf(stderr, "DEBUG: Set callee type_info kind=%d for '%s'\n", sym->type->kind, func_name);
                 }
                 // Check if this is callable: either a function or a function pointer parameter
                 if (sym) {
@@ -496,11 +490,9 @@ static void analyze_node(ASTNode *node) {
     if (!node) return;
     if (++recursion_depth > MAX_RECURSION) {
         recursion_depth--;
-        fprintf(stderr, "DEBUG: Max recursion depth reached in analyze_node\n");
         return;
     }
     
-    fprintf(stderr, "DEBUG: analyze_node type=%d\n", node->type);
     
     switch (node->type) {
         case AST_FUNCTION_DECL:

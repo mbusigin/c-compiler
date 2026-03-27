@@ -6,6 +6,7 @@
 #define IR_H
 
 #include "../common/list.h"
+#include "../parser/ast.h"  // For Type
 
 typedef enum {
     IR_NOP, IR_LABEL, IR_JMP, IR_JMP_IF, IR_RET, IR_RET_VOID, IR_CALL,
@@ -26,10 +27,15 @@ typedef enum {
     IR_RESTORE_X8_FROM_X20,  // Restore x8 from x20
     IR_LOAD_OFFSET,   // Load from [base_ptr + offset*4]
     IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
-    IR_STORE_INDIRECT, // Store w8 to [x21] (address in x21, value in x8)
+    IR_STORE_INDIRECT, // Store x8 to [x20] (address in x20, value in x8)
+    IR_STORE_INDIRECT_X22, // Store x8 to [x22] (address in x22, value in x8)
+    IR_LOAD_STRING,    // Load string address into x8
+    IR_SAVE_X8_TO_X22, // Save x8 to x22 (callee-saved, for struct member access)
     IR_LEA,           // Load effective address: x8 = sp + offset
     IR_ADD_X21,       // x8 = x22 + x8 (add saved address to offset)
-    IR_ADD_IMM64      // x8 = x8 + imm (64-bit add for pointer arithmetic)
+    IR_ADD_IMM64,     // x8 = x8 + imm (64-bit add for pointer arithmetic)
+    IR_LOAD_EXTERNAL,  // Load from external symbol: x8 = &symbol_name
+    IR_LOAD_FUNC_ADDR  // Load function address: x8 = &func_name (for function pointers)
 } IROpcode;
 
 typedef enum { IR_VALUE_INT, IR_VALUE_FLOAT, IR_VALUE_PTR, IR_VALUE_STRING } IRValueKind;
@@ -45,6 +51,7 @@ typedef struct IRValue {
     bool emitted;     // True if this value has been emitted to WASM stack
     int param_reg;     // For parameters: which register (x0-x3) it's in; -2 = local var
     int offset;        // For local variables: stack offset
+    int elem_size;     // Element size for array accesses (1, 2, 4, or 8 bytes)
 } IRValue;
 
 typedef struct IRInstruction {
@@ -68,15 +75,25 @@ typedef struct IRFunction {
     bool is_static;  // True if function has static storage class
 } IRFunction;
 
+typedef struct IRGlobal {
+    char *name;
+    Type *type;
+    IRValue *initializer;  // Initial value (can be NULL for zero-init)
+    bool is_external;      // True if declared extern
+} IRGlobal;
+
 typedef struct IRModule {
     List *functions;
     List *strings;
+    List *globals;         // Global variables
 } IRModule;
 
 IRModule *ir_module_create(void);
 void ir_module_destroy(IRModule *module);
 IRFunction *ir_function_create(const char *name);
 IRBasicBlock *ir_block_create(const char *name);
+IRGlobal *ir_global_create(const char *name, Type *type, IRValue *initializer);
+void ir_module_add_global(IRModule *module, IRGlobal *global);
 void ir_module_print(const IRModule *module);
 
 #endif // IR_H

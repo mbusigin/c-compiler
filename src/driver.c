@@ -26,14 +26,12 @@ const char *VERSION = "0.1.0";
 const char *COMPILER_NAME = "c-compiler";
 
 int compile_file(const char *filename, CompileOptions *options) {
-    fprintf(stderr, "DEBUG: compile_file starting for %s\n", filename);
     // Read source file
     char *source = read_file(filename);
     if (!source) {
         error("Could not read file: %s\n", filename);
         return 1;
     }
-    fprintf(stderr, "DEBUG: source read\n");
     
     // Preprocess
     free(source);  // Free the source we read, preprocess_file will re-read
@@ -42,7 +40,6 @@ int compile_file(const char *filename, CompileOptions *options) {
         error("Could not preprocess file: %s\n", filename);
         return 1;
     }
-    fprintf(stderr, "DEBUG: preprocessed\n");
     source = preprocessed;
     
     // Preprocess-only mode: output preprocessed source and exit
@@ -53,9 +50,7 @@ int compile_file(const char *filename, CompileOptions *options) {
     }
     
     // Lexical analysis
-    fprintf(stderr, "DEBUG: lexer_create\n");
     Lexer *lexer = lexer_create(source);
-    fprintf(stderr, "DEBUG: lexer created\n");
     
     if (options->dump_tokens) {
         printf("Tokens for %s:\n", filename);
@@ -71,21 +66,17 @@ int compile_file(const char *filename, CompileOptions *options) {
     }
     
     // Create parser - it will fetch the first token internally
-    fprintf(stderr, "DEBUG: parser_create\n");
     Parser *parser = parser_create(lexer);
-    fprintf(stderr, "DEBUG: parse starting\n");
     ASTNode *ast = parse(parser);
-    fprintf(stderr, "DEBUG: parse done\n");
     
     if (options->dump_ast) {
         printf("AST for %s:\n", filename);
         translation_unit_print(ast);
     }
     
+    
     // Semantic analysis
-    fprintf(stderr, "DEBUG: analyzer_analyze starting\n");
     AnalyzeResult *result = analyzer_analyze(ast);
-    fprintf(stderr, "DEBUG: analyzer_analyze done\n");
     
     if (options->syntax_only || result->error_count > 0) {
         analyzer_free_result(result);

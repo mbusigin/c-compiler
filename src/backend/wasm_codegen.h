@@ -23,6 +23,8 @@ typedef struct WasmContext {
     int stack_depth;
     // Track if last instruction was a comparison (result already on stack)
     bool last_was_cmp;
+    // Track if we need a function table (for indirect calls)
+    bool needs_table;
 } WasmContext;
 
 // Main entry point - generate WAT from IR module
@@ -37,6 +39,7 @@ void wasm_context_destroy(WasmContext *ctx);
 void wasm_emit_module_header(WasmContext *ctx);
 void wasm_emit_module_footer(WasmContext *ctx);
 void wasm_emit_memory(WasmContext *ctx);
+void wasm_emit_table(WasmContext *ctx, IRModule *module);
 void wasm_emit_imports(WasmContext *ctx);
 void wasm_emit_exports(WasmContext *ctx, IRModule *module);
 void wasm_emit_data_section(WasmContext *ctx, IRModule *module);

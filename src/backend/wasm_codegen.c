@@ -13,6 +13,47 @@
 
 static int function_returns_void(IRFunction *func);
 
+// Check if module needs a function table (for indirect calls)
+static bool module_needs_table(IRModule *module) {
+    if (!module || !module->functions) return false;
+    
+    for (size_t fi = 0; fi < list_size(module->functions); fi++) {
+        IRFunction *func = list_get(module->functions, fi);
+        if (!func || !func->blocks) continue;
+        
+        for (size_t bi = 0; bi < list_size(func->blocks); bi++) {
+            IRBasicBlock *block = list_get(func->blocks, bi);
+            if (!block || !block->instructions) continue;
+            
+            for (size_t i = 0; i < list_size(block->instructions); i++) {
+                IRInstruction *instr = list_get(block->instructions, i);
+                if (instr) {
+                    if (instr->opcode == IR_CALL_INDIRECT || instr->opcode == IR_LOAD_FUNC_ADDR) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Find a function's index in the module's function list
+static int find_function_index(IRModule *module, const char *name) {
+    if (!module || !module->functions || !name) return 0;
+    
+    for (size_t i = 0; i < list_size(module->functions); i++) {
+        IRFunction *func = list_get(module->functions, i);
+        if (func && func->name && strcmp(func->name, name) == 0) {
+            return (int)i;
+        }
+    }
+    return 0;  // Default to first function if not found
+}
+
+// Current module being compiled (needed for function index lookup)
+static IRModule *current_module = NULL;
+
 // Local variable tracking: maps stack offsets to WASM local indices
 #define MAX_LOCALS 256
 typedef struct {
@@ -28,7 +69,8 @@ static int temp_local_for_save_x8 = -1;
 static int temp_local_for_x20 = -1;
 
 // Stack pointer for local arrays - starts at 65536 (64KB)
-static int wasm_stack_ptr = 65536;
+// NOTE: Defined in runtime.c to allow linking when compiler compiles itself
+extern int wasm_stack_ptr;
 
 static void reset_local_vars(int param_count) {
     local_var_count = 0;
@@ -71,6 +113,7 @@ WasmContext *wasm_context_create(FILE *out) {
     ctx->has_printf = false;
     ctx->has_putchar = false;
     ctx->stack_depth = 0;
+    ctx->needs_table = false;
     return ctx;
 }
 
@@ -90,6 +133,50 @@ void wasm_emit_module_footer(WasmContext *ctx) {
 
 void wasm_emit_memory(WasmContext *ctx) {
     wasm_emit_indented(ctx, 1, "(memory (export \"memory\") %d)\n", ctx->memory_pages);
+    wasm_emit(ctx, "\n");
+}
+
+void wasm_emit_table(WasmContext *ctx, IRModule *module) {
+    if (!ctx->needs_table) return;
+    
+    // Count functions for table size
+    int func_count = 0;
+    if (module && module->functions) {
+        func_count = (int)list_size(module->functions);
+    }
+    if (func_count == 0) func_count = 1;  // At least one slot
+    
+    wasm_emit_comment(ctx, "Function table for indirect calls");
+    wasm_emit_indented(ctx, 1, "(table %d funcref)\n", func_count);
+    
+    // Emit table elements (function indices)
+    wasm_emit_indented(ctx, 1, "(elem (i32.const 0)");
+    if (module && module->functions) {
+        for (size_t i = 0; i < list_size(module->functions); i++) {
+            IRFunction *func = list_get(module->functions, i);
+            if (func && func->name) {
+                wasm_emit(ctx, " $%s", func->name);
+            }
+        }
+    }
+    wasm_emit(ctx, ")\n");
+    wasm_emit(ctx, "\n");
+}
+
+void wasm_emit_globals(WasmContext *ctx, IRModule *module) {
+    if (!module || !module->globals || list_size(module->globals) == 0) return;
+    
+    wasm_emit_comment(ctx, "Global variables");
+    for (size_t i = 0; i < list_size(module->globals); i++) {
+        IRGlobal *global = list_get(module->globals, i);
+        if (global->initializer && global->initializer->kind == IR_VALUE_INT) {
+            wasm_emit_indented(ctx, 1, "(global $%s (mut i32) (i32.const %lld))\n", 
+                             global->name, global->initializer->data.int_val);
+        } else {
+            // Zero-initialized global
+            wasm_emit_indented(ctx, 1, "(global $%s (mut i32) (i32.const 0))\n", global->name);
+        }
+    }
     wasm_emit(ctx, "\n");
 }
 
@@ -369,6 +456,14 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             if (instr->result) instr->result->emitted = true;  // Mark result as on stack
             break;
             
+        case IR_LOAD_EXTERNAL:
+            // Load value of global variable
+            if (instr->label) {
+                wasm_emit_instr(ctx, "global.get $%s", instr->label);
+                if (instr->result) instr->result->emitted = true;
+            }
+            break;
+            
         case IR_STORE:
             // WASM i32.store expects: address, value (value on top of stack)
             // So emit address first, then value
@@ -423,6 +518,59 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             }
             break;
             
+        case IR_LOAD_FUNC_ADDR:
+            // Load function address (index in function table)
+            // For WASM, we push the function's table index onto the stack
+            if (instr->label) {
+                // Find the function's index in the module
+                int func_idx = find_function_index(current_module, instr->label);
+                wasm_emit_instr(ctx, "i32.const %d", func_idx);
+                if (instr->result) {
+                    instr->result->emitted = true;
+                }
+            }
+            break;
+            
+        case IR_CALL_INDIRECT: {
+            // Indirect call through function pointer
+            // args[0] = function pointer (table index), args[1-3] = arguments
+            // For WASM: push arguments, then call_indirect
+            
+            // Count parameters (excluding the function pointer at args[0])
+            int param_count = 0;
+            for (int i = 1; i < instr->num_args && i < 5; i++) {
+                if (instr->args[i]) param_count++;
+            }
+            
+            // Load arguments onto stack
+            for (int i = 1; i < instr->num_args && i < 5; i++) {
+                if (instr->args[i]) emit_value(ctx, instr->args[i]);
+            }
+            
+            // The function pointer (table index) should already be on the stack
+            // from IR_LOAD_FUNC_ADDR or loaded from a variable
+            if (instr->args[0]) {
+                emit_value(ctx, instr->args[0]);
+            }
+            
+            // Build the call_indirect signature based on parameter count
+            // For now, assume all params are i32 and return type is i32
+            char sig[256] = "";
+            strcpy(sig, "call_indirect");
+            for (int i = 0; i < param_count; i++) {
+                if (i == 0) strcat(sig, " (param i32)");
+                else strcat(sig, " i32");
+            }
+            strcat(sig, " (result i32)");
+            
+            wasm_emit_instr(ctx, "%s", sig);
+            
+            if (instr->result) {
+                instr->result->emitted = true;
+            }
+            break;
+        }
+            
         case IR_RET:
             if (instr->num_args > 0 && instr->args[0]) emit_value(ctx, instr->args[0]);
             wasm_emit_instr(ctx, "return");
@@ -432,49 +580,11 @@ static void emit_instr(WasmContext *ctx, IRInstruction *instr) {
             wasm_emit_instr(ctx, "return");
             break;
 
-        case IR_SAVE_X8:
-            // Save the current value on stack to a temp local WITHOUT popping
-            // Uses local.tee which saves the value and leaves it on stack
-            if (temp_local_for_save_x8 < 0) temp_local_for_save_x8 = get_or_create_local(9999);
-            wasm_emit_instr(ctx, "local.tee $%d", temp_local_for_save_x8);
-            break;
-
-        case IR_ADD_X21:
-            // Add the saved value (x20 or x21) to the current value (x8)
-            // This is used to add a saved pointer to an offset
-            // Note: In the current IR generation, SAVE_X8_TO_X20 saves the pointer,
-            // and ADD_X21 is used to add it to the offset
-            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
-            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_x20);
-            wasm_emit_instr(ctx, "i32.add");
-            break;
-
         case IR_STORE_INDIRECT:
             // Store value to memory at address
             // Stack: [address, value] -> []
             // In WASM: i32.store
             wasm_emit_instr(ctx, "i32.store");
-            break;
-
-        case IR_RESTORE_X8_RESULT:
-            // Restore the saved value (x22) to the stack
-            // This is used for post-increment/decrement to return the original value
-            if (temp_local_for_save_x8 < 0) temp_local_for_save_x8 = get_or_create_local(9999);
-            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_save_x8);
-            break;
-
-        case IR_SAVE_X8_TO_X20:
-            // Save the current value to a second temp local (x20)
-            // Used for preserving pointer values across function calls
-            // Note: Use local.set to save without leaving on stack
-            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
-            wasm_emit_instr(ctx, "local.set $%d", temp_local_for_x20);
-            break;
-
-        case IR_RESTORE_X8_FROM_X20:
-            // Restore the saved value from x20
-            if (temp_local_for_x20 < 0) temp_local_for_x20 = get_or_create_local(8888);
-            wasm_emit_instr(ctx, "local.get $%d", temp_local_for_x20);
             break;
 
         case IR_LEA:
@@ -724,6 +834,7 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
 void wasm_codegen_generate(IRModule *module, FILE *out) {
     if (!module || !out) return;
     
+    current_module = module;  // Set for function index lookups
     reset_stack_ptr();  // Reset stack pointer for new module
     
     WasmContext *ctx = wasm_context_create(out);
@@ -750,6 +861,14 @@ void wasm_codegen_generate(IRModule *module, FILE *out) {
     
     wasm_emit_imports(ctx);
     wasm_emit_memory(ctx);
+    
+    // Check if we need a function table for indirect calls
+    ctx->needs_table = module_needs_table(module);
+    if (ctx->needs_table) {
+        wasm_emit_table(ctx, module);
+    }
+    
+    wasm_emit_globals(ctx, module);
     
     if (module->functions) {
         for (size_t i = 0; i < list_size(module->functions); i++) {

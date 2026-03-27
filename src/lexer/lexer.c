@@ -249,10 +249,23 @@ static Token scan_char(Lexer *lexer) {
     Token token = make_token(lexer, TOKEN_CHAR_CONSTANT);
     advance(lexer); // Opening quote
     
+    char char_value = 0;
     if (peek(lexer) == '\\') {
         advance(lexer); // Backslash
+        char escape_char = peek(lexer);
+        switch (escape_char) {
+            case 'n': char_value = '\n'; break;
+            case 't': char_value = '\t'; break;
+            case 'r': char_value = '\r'; break;
+            case '0': char_value = '\0'; break;
+            case '\\': char_value = '\\'; break;
+            case '\'': char_value = '\''; break;
+            case '"': char_value = '"'; break;
+            default: char_value = escape_char; break;
+        }
         advance(lexer); // Escaped character
     } else if (peek(lexer) != '\'') {
+        char_value = peek(lexer);
         advance(lexer);
     }
     
@@ -264,7 +277,7 @@ static Token scan_char(Lexer *lexer) {
     }
     
     token.length = (int)(lexer->source + lexer->position - token.lexeme);
-    token.value.int_val = 0; // TODO: Parse actual char value
+    token.value.int_val = char_value;
     return token;
 }
 
