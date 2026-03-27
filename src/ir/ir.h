@@ -80,6 +80,7 @@ typedef struct IRGlobal {
     Type *type;
     IRValue *initializer;  // Initial value (can be NULL for zero-init)
     bool is_external;      // True if declared extern
+    bool is_static;         // True if static (internal linkage)
 } IRGlobal;
 
 typedef struct IRModule {

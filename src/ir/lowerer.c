@@ -315,23 +315,30 @@ static IRValue *lower_identifier(ASTNode *node) {
         return result;
     }
     
-    // Check if it's a global variable (like stderr, stdout)
+    // Check if it's a global variable (like stderr, stdout, stdin)
     Symbol *global_sym = symtab_lookup(current_symtab, node->data.identifier.name);
-    if (global_sym && global_sym->kind == SYMBOL_VARIABLE) {
+    
+    // Special case: stderr/stdout/stdin are built-in external symbols
+    // Handle them even if not found in symbol table
+    const char *name = node->data.identifier.name;
+    bool is_stdio_stream = (strcmp(name, "stderr") == 0 || strcmp(name, "stdout") == 0 || strcmp(name, "stdin") == 0);
+    
+    if ((global_sym && global_sym->kind == SYMBOL_VARIABLE) || is_stdio_stream) {
         // This is a global variable - load its value
         IRValue *result = ir_value_create(IR_VALUE_INT);
         result->is_constant = false;
         result->is_temp = true;
         result->is_pointer = is_pointer_result(node);
         
-        // On macOS, stderr/stdout are actually __stderrp/__stdoutp
+        // On macOS, stderr/stdout/stdin are actually __stderrp/__stdoutp/__stdinp
         // These are external symbols, so use IR_LOAD_EXTERNAL
-        const char *name = node->data.identifier.name;
         const char *symbol_name = name;
         if (strcmp(name, "stderr") == 0) {
             symbol_name = "__stderrp";
         } else if (strcmp(name, "stdout") == 0) {
             symbol_name = "__stdoutp";
+        } else if (strcmp(name, "stdin") == 0) {
+            symbol_name = "__stdinp";
         }
         
         // Create IR_LOAD_EXTERNAL to load value from external symbol
@@ -364,6 +371,106 @@ static IRValue *lower_int_literal(ASTNode *node) {
 
 // Lower a binary expression
 static IRValue *lower_binary_expr(ASTNode *node) {
+    // Handle short-circuit operators specially
+    if (node->data.binary.op == OP_AND) {
+        // Short-circuit AND: if left is false, don't evaluate right
+        const char *skip_right_label = new_label();
+        const char *end_label = new_label();
+        
+        // Evaluate left, result in x8
+        IRValue *left_val = lower_expression(node->data.binary.left);
+        
+        // Jump to end (skip right) if left is false
+        // IR_JMP_IF jumps to label if condition is FALSE (cbz)
+        IRInstruction *jmp_skip = ir_instr_create(IR_JMP_IF);
+        jmp_skip->args[0] = left_val;
+        jmp_skip->num_args = 1;
+        jmp_skip->label = skip_right_label;
+        add_instr(jmp_skip);
+        
+        // Left is true, evaluate right
+        IRValue *right_val = lower_expression(node->data.binary.right);
+        (void)right_val;  // Result already in x8
+        
+        // Jump to end
+        IRInstruction *jmp_end = ir_instr_create(IR_JMP);
+        jmp_end->label = end_label;
+        add_instr(jmp_end);
+        
+        // Skip right label: left was false, set result to 0
+        IRInstruction *skip_lbl = ir_instr_create(IR_LABEL);
+        skip_lbl->label = skip_right_label;
+        add_instr(skip_lbl);
+        
+        // Set result to 0 (false)
+        IRValue *zero_val = ir_value_create(IR_VALUE_INT);
+        zero_val->data.int_val = 0;
+        zero_val->is_constant = true;
+        IRInstruction *set_false = ir_instr_create(IR_CONST_INT);
+        set_false->result = zero_val;
+        add_instr(set_false);
+        
+        // End label
+        IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
+        end_lbl->label = end_label;
+        add_instr(end_lbl);
+        
+        // Return a temp value (result is in x8)
+        IRValue *result = ir_value_create(IR_VALUE_INT);
+        result->is_constant = false;
+        result->is_temp = true;
+        return result;
+    }
+    
+    if (node->data.binary.op == OP_OR) {
+        // Short-circuit OR: if left is true, don't evaluate right
+        const char *eval_right_label = new_label();
+        const char *end_label = new_label();
+        
+        // Evaluate left, result in x8
+        IRValue *left_val = lower_expression(node->data.binary.left);
+        
+        // Jump to eval_right if left is false
+        IRInstruction *jmp_eval = ir_instr_create(IR_JMP_IF);
+        jmp_eval->args[0] = left_val;
+        jmp_eval->num_args = 1;
+        jmp_eval->label = eval_right_label;
+        add_instr(jmp_eval);
+        
+        // Left is true, set result to 1
+        IRValue *one_val = ir_value_create(IR_VALUE_INT);
+        one_val->data.int_val = 1;
+        one_val->is_constant = true;
+        IRInstruction *set_true = ir_instr_create(IR_CONST_INT);
+        set_true->result = one_val;
+        add_instr(set_true);
+        
+        // Jump to end
+        IRInstruction *jmp_end = ir_instr_create(IR_JMP);
+        jmp_end->label = end_label;
+        add_instr(jmp_end);
+        
+        // Evaluate right label
+        IRInstruction *eval_lbl = ir_instr_create(IR_LABEL);
+        eval_lbl->label = eval_right_label;
+        add_instr(eval_lbl);
+        
+        // Evaluate right, result in x8
+        IRValue *right_val = lower_expression(node->data.binary.right);
+        (void)right_val;
+        
+        // End label
+        IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
+        end_lbl->label = end_label;
+        add_instr(end_lbl);
+        
+        // Return a temp value
+        IRValue *result = ir_value_create(IR_VALUE_INT);
+        result->is_constant = false;
+        result->is_temp = true;
+        return result;
+    }
+    
     IRValue *left = lower_expression(node->data.binary.left);
     
     // If left is a temp and right contains a call, save left to stack before evaluating right
@@ -418,18 +525,6 @@ static IRValue *lower_binary_expr(ASTNode *node) {
         case OP_GE: opcode = IR_CMP_GE; break;
         case OP_EQ: opcode = IR_CMP_EQ; break;
         case OP_NE: opcode = IR_CMP_NE; break;
-        case OP_AND:
-        case OP_OR: {
-            IRInstruction *bool_instr = ir_instr_create(
-                node->data.binary.op == OP_AND ? IR_BOOL_AND : IR_BOOL_OR);
-            bool_instr->result = ir_value_create(IR_VALUE_INT);
-            bool_instr->result->is_constant = false;
-            bool_instr->result->is_temp = true;
-            bool_instr->args[0] = right;
-            bool_instr->num_args = 1;
-            add_instr(bool_instr);
-            return bool_instr->result;
-        }
         default: opcode = IR_ADD; break;
     }
 
@@ -1304,39 +1399,41 @@ static IRValue *lower_expression(ASTNode *node) {
 
             IRValue *cond_val = lower_expression(node->data.conditional.condition);
 
+            // Jump to else if condition is false (default IR_JMP_IF behavior)
             IRInstruction *jmp_if = ir_instr_create(IR_JMP_IF);
             jmp_if->args[0] = cond_val;
             jmp_if->num_args = 1;
             jmp_if->label = else_label;
             add_instr(jmp_if);
 
+            // Then branch: evaluate then_expr, result goes to x8
             IRValue *then_val = lower_expression(node->data.conditional.then_expr);
-            IRInstruction *ret_then = ir_instr_create(IR_RET);
-            ret_then->args[0] = then_val;
-            ret_then->num_args = 1;
-            add_instr(ret_then);
+            (void)then_val;  // Result is already in x8
 
+            // Jump to end
             IRInstruction *jmp_end = ir_instr_create(IR_JMP);
             jmp_end->label = end_label;
             add_instr(jmp_end);
 
+            // Else label
             IRInstruction *else_lbl = ir_instr_create(IR_LABEL);
             else_lbl->label = else_label;
             add_instr(else_lbl);
 
+            // Else branch: evaluate else_expr, result goes to x8
             IRValue *else_val = lower_expression(node->data.conditional.else_expr);
-            IRInstruction *ret_else = ir_instr_create(IR_RET);
-            ret_else->args[0] = else_val;
-            ret_else->num_args = 1;
-            add_instr(ret_else);
+            (void)else_val;  // Result is already in x8
 
+            // End label: x8 contains the result from whichever branch was taken
             IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
             end_lbl->label = end_label;
             add_instr(end_lbl);
 
+            // Return a temp value indicating x8 has the result
             IRValue *result = ir_value_create(IR_VALUE_INT);
             result->is_constant = false;
             result->is_temp = true;
+            result->is_pointer = is_pointer_result(node);
             return result;
         }
 
@@ -1770,6 +1867,11 @@ static void lower_function(ASTNode *node) {
     if (node->data.function.body) {
         lower_statement(node->data.function.body);
     }
+    
+    // Add implicit return for functions that don't end with one
+    // This is needed for void functions and functions that fall off the end
+    IRInstruction *ret_void = ir_instr_create(IR_RET_VOID);
+    add_instr(ret_void);
 
     // Restore
     current_function = prev_func;
@@ -1778,8 +1880,40 @@ static void lower_function(ASTNode *node) {
 
 // Lower a global variable declaration
 static void lower_global_var(ASTNode *node) {
-    UNUSED(node);
-    // TODO: Handle global variables
+    if (!node || node->type != AST_VARIABLE_DECL) return;
+    
+    const char *name = node->data.variable.name;
+    
+    // Skip anonymous/empty variables
+    if (!name || name[0] == '\0') {
+        return;
+    }
+    
+    Type *type = node->data.variable.var_type;
+    ASTNode *init = node->data.variable.init;
+    bool is_static = node->is_static;
+    
+    // Create IRValue for initializer
+    IRValue *init_value = NULL;
+    if (init) {
+        if (init->type == AST_INTEGER_LITERAL_EXPR) {
+            init_value = ir_value_create(IR_VALUE_INT);
+            init_value->is_constant = true;
+            init_value->data.int_val = init->data.int_literal.value;
+        } else if (init->type == AST_IDENTIFIER_EXPR) {
+            // Handle NULL initializer
+            if (strcmp(init->data.identifier.name, "NULL") == 0) {
+                init_value = ir_value_create(IR_VALUE_INT);
+                init_value->is_constant = true;
+                init_value->data.int_val = 0;
+            }
+        }
+    }
+    
+    // Create and add global to module
+    IRGlobal *global = ir_global_create(name, type, init_value);
+    global->is_static = is_static;
+    ir_module_add_global(current_module, global);
 }
 
 // Lower a translation unit

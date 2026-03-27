@@ -7,9 +7,11 @@
 
 typedef struct _FILE FILE;
 
-#define stdin  ((FILE*)0)
-#define stdout ((FILE*)1)
-#define stderr ((FILE*)2)
+// Declare stdin, stdout, stderr as external FILE* variables
+// On macOS, these are actually __stdinp, __stdoutp, __stderrp
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
 
 #define EOF (-1)
 #define BUFSIZ 8192

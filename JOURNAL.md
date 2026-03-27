@@ -1,63 +1,54 @@
 # C Compiler Bootstrap Journal
 
-## Iteration 1 Summary
+## Iteration 3 Summary
 
 ### Goal
-Execute OODA iteration 1/10: make self-verify, identify compiler bugs preventing test completion/execution, fix bugs, journal results.
+Execute OODA iteration 3/10: make self-verify, identify bugs, fix, and journal results.
 
 ### Progress Made
 
 #### ✅ Major Bug Fixes
 
-1. **Stack frame addressing bug** - Changed from SP-relative to FP-relative (x29) addressing
-   - Fixed IR_LOAD_STACK, IR_STORE_STACK, IR_STORE_PARAM to use `[x29, #offset]`
-   - Fixed emit_load_value for local variables
-   - Fixed prologue/epilogue for correct frame pointer setup
+1. **Added implicit return for void functions** - Functions that don't end with a return statement now get an implicit `ret_void` instruction, preventing undefined behavior.
 
-2. **Printf variadic argument handling** - Fixed multiple issues:
-   - Added support for 3+ arguments in printf calls
-   - Fixed argument ordering to preserve temp values in x8
-   - Fixed stack allocation for variadic args
+2. **Fixed stderr/stdout/stdin handling** - Changed from macros to external variable declarations in stdio.h, and updated the lowerer to recognize these symbols even if not in the symbol table.
 
-3. **Call argument preservation** - Fixed temp value handling
-   - Changed to check ALL remaining arguments (not just next one) for potential x8 modification
-   - Saves temp values to stack when any later argument might modify x8
-
-4. **Global variable support** - Added IR_LOAD_EXTERNAL for external globals
-   - Added stderr, stdout as builtin symbols
-   - Uses `adrp + ldr` from GOT for external symbols
-   - Fixed symbol name mapping (stderr -> __stderrp on macOS)
-
-5. **Large stack frame handling** - Fixed ldp/stp offset limits
-   - Added manual address computation for frames > 504 bytes
+3. **Improved short-circuit evaluation for && and ||** - Implemented proper control flow with labels for logical operators.
 
 ### Current Status
 
 | Stage | Status |
 |-------|--------|
 | Stage0 (GCC) | ✅ Builds successfully, compiles all 36/36 files |
-| Stage1 (Self-compiled) | ⚠️ Builds but crashes at runtime due to missing static variable definitions |
+| Stage1 (Self-compiled) | ✅ Builds and runs `--help` successfully |
+| Stage2 (Stage1-compiled) | ❌ Crashes when compiling files |
 
 ### Remaining Issues
 
-1. **Static variable definitions not emitted** - The compiler generates references to static variables (like `arm64_vtable`, `MAX_RECURSION`) but doesn't emit the actual data definitions in the assembly output.
+**Stage1 crashes when compiling source files:**
+- `./build/compiler_stage1 -S /tmp/tiny.c` crashes
+- Crash occurs in `strlen` called from `vfprintf` inside `vreport` (error reporting)
+- The issue appears to be with string address calculations or memory access patterns
 
-2. **Workaround in place** - Added stub definitions in `runtime.s` for critical static variables, but this is not a proper solution.
+**Investigation findings:**
+- Stage1 correctly runs `--help` (no file input needed)
+- Stage1 crashes when it tries to report an error (like "Could not read file")
+- The crash address (0x4b8d0) corresponds to the string "error" in the binary
+- The issue is likely related to how stage0-generated code handles certain memory operations
 
 ### Files Modified
 
-1. `src/backend/codegen.c` - Frame pointer addressing, printf handling, external symbol loading
-2. `src/ir/lowerer.c` - Call argument preservation, global variable handling
-3. `src/sema/analyzer.c` - Added stderr, stdout, __stderrp, __stdoutp builtins
-4. `src/parser/parser.c` - Removed stderr/stdout null-pointer workaround
-5. `src/runtime.s` - Added stubs for global/static variables
+1. `src/ir/lowerer.c` - Added implicit ret_void, fixed conditional expressions, improved stderr handling
+2. `src/backend/codegen.c` - Frame pointer setup for callee-saved registers
+3. `include/stdio.h` - Changed stdin/stdout/stderr from macros to extern declarations
+4. `JOURNAL.md` - Documentation
 
-### Next Steps for Iteration 2
+### Next Steps for Iteration 4
 
-1. Implement proper static/global variable data emission in assembly output
-2. Handle static const variables as compile-time constants (inline them)
-3. Test self-verify after fixing static variable issues
-4. Work towards convergence where stage1 and stage2 produce identical output
+1. Debug why stage1 crashes when compiling files
+2. Check string literal address calculation in generated code
+3. Investigate memory access patterns for error reporting
+4. Consider if the issue is in how we're loading string addresses
 
 ### Test Commands
 
@@ -65,8 +56,11 @@ Execute OODA iteration 1/10: make self-verify, identify compiler bugs preventing
 # Build and test
 make clean && make self
 
-# Test stage1
+# Test stage1 with --help
 ./build/compiler_stage1 --help
+
+# Test stage1 compiling a file
+./build/compiler_stage1 -S /tmp/tiny.c -o /tmp/tiny.s
 
 # Full self-verify
 make self-verify
@@ -75,5 +69,16 @@ make self-verify
 ### Convergence Status
 
 ```
-CONVERGENCE: IN PROGRESS - Stage1 builds, runtime crashes due to missing static variable definitions
+CONVERGENCE: IN PROGRESS - Stage1 runs --help but crashes when compiling files
 ```
+
+### Technical Details
+
+**Stage1 vreport function analysis:**
+- Correctly loads stderr via GOT
+- Uses fprintf with format string "%s%s:"
+- Crashes when strlen tries to read the format string
+- String addresses appear to be calculated incorrectly in some cases
+
+**Hypothesis:**
+The issue may be related to how the compiler handles PC-relative addressing for string literals when compiled by itself. The first instruction that accesses a string literal after a function call may have incorrect address calculation.

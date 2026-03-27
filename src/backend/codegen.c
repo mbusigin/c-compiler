@@ -35,31 +35,37 @@ static void emit_instr(const char *fmt, ...) {
 static void emit_immediate(int reg, long long value);
 
 static void prologue(int locals_size) {
-    // Allocate locals aligned to 16 bytes, plus 16 bytes for saved fp/lr
+    // Allocate locals aligned to 16 bytes, plus 32 bytes for saved fp/lr/x20/x21
     // Stack layout (grows down):
     //   [higher addresses]
     //   saved lr
     //   saved fp
+    //   saved x21
+    //   saved x20
     //   [locals...]
     //   sp -> [lower addresses]
     // 
     // x29 (frame pointer) points to the base of locals for stable addressing
     // Locals are at negative offsets from x29, or we can use positive offsets
     // if we set x29 to point below the locals.
-    int total = locals_size + 16;
+    // We save x20, x21 (callee-saved) for use in pointer preservation
+    int callee_saved = 32;  // fp, lr, x20, x21 (4 * 8 = 32 bytes)
+    int total = locals_size + callee_saved;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
     if (total > 0)
         emit_instr("sub\tsp, sp, #%d", total);
     
-    // Save fp/lr at the top of the frame (highest addresses)
-    // fp/lr are saved at [sp + locals_size]
+    // Save fp/lr/x20/x21 at the top of the frame (highest addresses)
+    // Saved at [sp + locals_size]
     // Check if offset is within valid range for stp [-512, 504]
     if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
         emit_instr("stp\tx29, x30, [sp, #%d]", locals_size);  // Save fp/lr above locals
+        emit_instr("stp\tx20, x21, [sp, #%d]", locals_size + 16);  // Save x20/x21
     } else {
         // For large frames, compute the address manually
         emit_instr("add\tx8, sp, #%d", locals_size);
         emit_instr("stp\tx29, x30, [x8]");
+        emit_instr("stp\tx20, x21, [x8, #16]");
     }
     
     // Set frame pointer to base of locals area
@@ -69,26 +75,26 @@ static void prologue(int locals_size) {
 }
 
 static void epilogue(int locals_size) {
-    int total = locals_size + 16;
+    int callee_saved = 32;
+    int total = locals_size + callee_saved;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
     // x29 points to sp (base of locals area)
-    // fp/lr were saved at [sp, #locals_size] = [x29, #locals_size]
+    // fp/lr/x20/x21 were saved at [sp, #locals_size] = [x29, #locals_size]
     
     // Check if offset is within valid range for ldp [-512, 504]
     if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
+        emit_instr("ldp\tx20, x21, [x29, #%d]", locals_size + 16);  // Restore x20/x21
         emit_instr("ldp\tx29, x30, [x29, #%d]", locals_size);  // Restore fp/lr
     } else {
         // For large frames, compute the address manually
         emit_instr("add\tx8, x29, #%d", locals_size);
         emit_instr("ldp\tx29, x30, [x8]");
+        emit_instr("ldp\tx20, x21, [x8, #16]");
     }
     if (total > 0)
         emit_instr("add\tsp, sp, #%d", total);
     emit_instr("ret");
 }
-
-// Forward declaration
-static int current_locals_size;
 
 static void emit_jmp(const char *label) {
     emit_instr("b\t%s", label);
@@ -261,7 +267,8 @@ static void gen_instr(IRInstruction *instr) {
             if (instr->num_args > 0 && instr->args[0]) {
                 emit_load_value(0, instr->args[0]);
             }
-            // cbz jumps if condition is FALSE (zero)
+            // Jump to label if condition is FALSE (zero)
+            // This is the correct behavior for if/while statements
             emit_instr("cbz\tw0, %s", label);
             break;
         }
@@ -963,6 +970,28 @@ static void gen_module(IRModule *module) {
             const char *str = list_get(module->strings, i);
             emit("l_.str%d:\n", (int)i);
             emit("\t.asciz\t%s\n", str);
+        }
+        emit("\t.text\n");
+    }
+    
+    // Emit global variables in data section
+    if (list_size(module->globals) > 0) {
+        emit("\t.section\t__DATA,__data\n");
+        for (size_t i = 0; i < list_size(module->globals); i++) {
+            IRGlobal *g = list_get(module->globals, i);
+            emit("\t.p2align\t3\n");
+            // Static variables have internal linkage - don't emit .globl
+            if (!g->is_static) {
+                emit("\t.globl\t_%s\n", g->name);
+            }
+            emit("_%s:\n", g->name);
+            if (g->initializer && g->initializer->is_constant) {
+                // Emit the initializer value
+                emit("\t.quad\t%lld\n", (long long)g->initializer->data.int_val);
+            } else {
+                // Zero-initialize
+                emit("\t.quad\t0\n");
+            }
         }
         emit("\t.text\n");
     }
