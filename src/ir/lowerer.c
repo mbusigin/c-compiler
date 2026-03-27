@@ -315,6 +315,33 @@ static IRValue *lower_identifier(ASTNode *node) {
         return result;
     }
     
+    // Check if it's a global variable (like stderr, stdout)
+    Symbol *global_sym = symtab_lookup(current_symtab, node->data.identifier.name);
+    if (global_sym && global_sym->kind == SYMBOL_VARIABLE) {
+        // This is a global variable - load its value
+        IRValue *result = ir_value_create(IR_VALUE_INT);
+        result->is_constant = false;
+        result->is_temp = true;
+        result->is_pointer = is_pointer_result(node);
+        
+        // On macOS, stderr/stdout are actually __stderrp/__stdoutp
+        // These are external symbols, so use IR_LOAD_EXTERNAL
+        const char *name = node->data.identifier.name;
+        const char *symbol_name = name;
+        if (strcmp(name, "stderr") == 0) {
+            symbol_name = "__stderrp";
+        } else if (strcmp(name, "stdout") == 0) {
+            symbol_name = "__stdoutp";
+        }
+        
+        // Create IR_LOAD_EXTERNAL to load value from external symbol
+        IRInstruction *load_instr = ir_instr_create(IR_LOAD_EXTERNAL);
+        load_instr->result = result;
+        load_instr->label = symbol_name;
+        add_instr(load_instr);
+        return result;
+    }
+    
     // For non-parameters, non-variables, and non-functions, create a dummy value
     IRValue *result = ir_value_create(IR_VALUE_INT);
     result->is_constant = false;
@@ -978,19 +1005,24 @@ static IRValue *lower_call_expr(ASTNode *node) {
     for (size_t i = 0; i < list_size(node->data.call.args); i++) {
         IRValue *arg = lower_expression(list_get(node->data.call.args, i));
         
-        // Check if next argument is a string literal (which doesn't modify x8)
-        bool next_is_string_literal = false;
+        // Check if ANY remaining argument (not just the next one) will modify x8.
+        // We need to save this temp if there are any non-string-literal args remaining.
+        bool remaining_args_preserve_x8 = true;
         if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1) {
-            ASTNode *next_arg_node = list_get(node->data.call.args, i + 1);
-            if (next_arg_node && next_arg_node->type == AST_STRING_LITERAL_EXPR) {
-                next_is_string_literal = true;
+            // Check all remaining arguments
+            for (size_t j = i + 1; j < list_size(node->data.call.args); j++) {
+                ASTNode *remaining_arg = list_get(node->data.call.args, j);
+                if (remaining_arg && remaining_arg->type != AST_STRING_LITERAL_EXPR) {
+                    // This remaining argument will emit IR and may modify x8
+                    remaining_args_preserve_x8 = false;
+                    break;
+                }
             }
         }
         
-        // If this argument is a temp and the next argument might modify x8,
-        // save it to stack before evaluating the next argument
-        // Skip saving if next argument is a string literal (doesn't emit IR, preserves x8)
-        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1 && !next_is_string_literal) {
+        // If this argument is a temp and remaining arguments might modify x8,
+        // save it to stack before continuing
+        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1 && !remaining_args_preserve_x8) {
             // Allocate a stack slot for this temp
             temp_slot = locals_size;
             locals_size += 8;

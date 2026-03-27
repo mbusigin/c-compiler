@@ -36,38 +36,52 @@ static void emit_immediate(int reg, long long value);
 
 static void prologue(int locals_size) {
     // Allocate locals aligned to 16 bytes, plus 16 bytes for saved fp/lr
-    // Stack grows down: [saved fp/lr at lower addresses, locals at higher addresses]
-    // Layout: sp -> [locals...] -> [saved fp] -> [saved lr] -> (original sp)
-    // With locals_size = 8 (one 8-byte variable), we need:
-    //   8 bytes (local) + 16 bytes (fp/lr) = 24, rounded to 32
+    // Stack layout (grows down):
+    //   [higher addresses]
+    //   saved lr
+    //   saved fp
+    //   [locals...]
+    //   sp -> [lower addresses]
+    // 
+    // x29 (frame pointer) points to the base of locals for stable addressing
+    // Locals are at negative offsets from x29, or we can use positive offsets
+    // if we set x29 to point below the locals.
     int total = locals_size + 16;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
     if (total > 0)
         emit_instr("sub\tsp, sp, #%d", total);
     
-    // For small offsets (within [-512, 504]), use direct store
-    // For larger offsets, use mov + str
-    if (locals_size <= 504 && locals_size >= -512) {
+    // Save fp/lr at the top of the frame (highest addresses)
+    // fp/lr are saved at [sp + locals_size]
+    // Check if offset is within valid range for stp [-512, 504]
+    if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
         emit_instr("stp\tx29, x30, [sp, #%d]", locals_size);  // Save fp/lr above locals
     } else {
-        // For large offsets, save fp/lr at sp
-        emit_instr("stp\tx29, x30, [sp, #0]");
+        // For large frames, compute the address manually
+        emit_instr("add\tx8, sp, #%d", locals_size);
+        emit_instr("stp\tx29, x30, [x8]");
     }
+    
+    // Set frame pointer to base of locals area
+    // Locals are stored at [sp, #0] through [sp, #locals_size-8]
+    // Set x29 = sp so we can address locals as [x29, #offset]
     emit_instr("mov\tx29, sp");
-    if (locals_size <= 504 && locals_size >= -512) {
-        emit_instr("add\tx29, x29, #%d", locals_size);  // x29 points to fp/lr location
-    } else {
-        // For large offsets, add locals_size to x29
-        emit_immediate(8, locals_size);
-        emit_instr("add\tx29, x29, x8");
-    }
 }
 
 static void epilogue(int locals_size) {
     int total = locals_size + 16;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
-    // x29 already points to [sp, #locals_size], which is where fp/lr were saved
-    emit_instr("ldp\tx29, x30, [x29]");  // Restore fp/lr using x29
+    // x29 points to sp (base of locals area)
+    // fp/lr were saved at [sp, #locals_size] = [x29, #locals_size]
+    
+    // Check if offset is within valid range for ldp [-512, 504]
+    if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
+        emit_instr("ldp\tx29, x30, [x29, #%d]", locals_size);  // Restore fp/lr
+    } else {
+        // For large frames, compute the address manually
+        emit_instr("add\tx8, x29, #%d", locals_size);
+        emit_instr("ldp\tx29, x30, [x8]");
+    }
     if (total > 0)
         emit_instr("add\tsp, sp, #%d", total);
     emit_instr("ret");
@@ -145,13 +159,13 @@ static void emit_load_value(int reg, IRValue *val) {
                 // It's a parameter - load from the appropriate register
                 emit_instr("mov\tx%d, x%d", reg, val->param_reg);
             } else if (val->param_reg == -2 || val->param_reg == -3) {
-                // It's a local variable on the stack - load from [sp, #offset]
+                // It's a local variable on the stack - load from [x29, #offset] (frame pointer relative)
                 // val->offset contains the stack offset
                 // Use 64-bit load for pointers, 32-bit for integers
                 if (val->is_pointer) {
-                    emit_instr("ldr\tx%d, [sp, #%d]", reg, val->offset);
+                    emit_instr("ldr\tx%d, [x29, #%d]", reg, val->offset);
                 } else {
-                    emit_instr("ldr\tw%d, [sp, #%d]", reg, val->offset);
+                    emit_instr("ldr\tw%d, [x29, #%d]", reg, val->offset);
                 }
             } else if (val->param_reg == -4) {
                 // Special: indicates this is a LOAD_STACK result that needs the offset from result field
@@ -269,9 +283,10 @@ static void gen_instr(IRInstruction *instr) {
             
         case IR_CALL: {
             // For function calls, pass arguments in registers (x0-x3)
-            // For variadic functions (printf), also put args on stack
+            // For variadic functions (printf, fprintf), also put args on stack
             int num_args = instr->num_args;
             bool is_printf = instr->label && strcmp(instr->label, "printf") == 0;
+            bool is_fprintf = instr->label && strcmp(instr->label, "fprintf") == 0;
             
             // NOTE: We do NOT save x8 here before the call - the caller should have
             // already dealt with preserving any needed values. x0-x3 are used for args.
@@ -279,28 +294,96 @@ static void gen_instr(IRInstruction *instr) {
             if (is_printf && num_args >= 2) {
                 // For printf:
                 // x0 = format string (first argument)
-                // [sp] = first variadic argument (second IR argument)
+                // Additional args go on stack (in reverse order for varargs)
                 
-                // Allocate stack
-                emit_instr("sub\tsp, sp, #32");
+                // Count variadic args (all args after format string)
+                int num_varargs = num_args - 1;
                 
-                // Load format string into x0
-                if (instr->args[0]) {
-                    emit_load_value(0, instr->args[0]);
+                // Allocate stack for variadic args (8 bytes each, padded to 32)
+                int stack_size = (num_varargs * 8 + 15) & ~15;
+                if (stack_size < 32) stack_size = 32;
+                emit_instr("sub\tsp, sp, #%d", stack_size);
+                
+                // IMPORTANT: If args[num_args-1] is a temp, it's already in x8.
+                // We need to store it FIRST before loading other args.
+                // Store variadic args on stack (in reverse order to handle temps correctly)
+                for (int i = num_args - 1; i >= 1; i--) {
+                    if (instr->args[i]) {
+                        // For the last arg (i == num_args-1), the value is already in x8 if it's a temp
+                        // from the previous expression evaluation
+                        if (i == num_args - 1 && instr->args[i]->is_temp) {
+                            // x8 already contains this value, no need to load
+                        } else {
+                            emit_load_value(8, instr->args[i]);
+                        }
+                        int offset = (i - 1) * 8;
+                        if (offset == 0) {
+                            emit_instr("mov\tx9, sp");
+                            emit_instr("str\tx8, [x9]");
+                        } else {
+                            emit_instr("str\tx8, [sp, #%d]", offset);
+                        }
+                    }
                 }
                 
-                // Load first variadic arg into x8 and store at [sp]
-                if (instr->args[1]) {
-                    emit_load_value(8, instr->args[1]);
-                    emit_instr("mov\tx9, sp");
-                    emit_instr("str\tx8, [x9]");
+                // Load format string into x0 (this may clobber x8)
+                if (instr->args[0]) {
+                    emit_load_value(0, instr->args[0]);
                 }
                 
                 if (instr->label) {
                     emit_call(instr->label);
                 }
                 
-                emit_instr("add\tsp, sp, #32");
+                emit_instr("add\tsp, sp, #%d", stack_size);
+            } else if (is_fprintf && num_args >= 3) {
+                // For fprintf:
+                // x0 = FILE* (first argument, e.g., stderr)
+                // x1 = format string (second argument)
+                // Additional args go on stack (in reverse order for varargs)
+                
+                // Count variadic args (all args after format string)
+                int num_varargs = num_args - 2;
+                
+                // Allocate stack for variadic args (8 bytes each, padded to 32)
+                int stack_size = (num_varargs * 8 + 15) & ~15;
+                if (stack_size < 32) stack_size = 32;
+                emit_instr("sub\tsp, sp, #%d", stack_size);
+                
+                // Store variadic args on stack (in reverse order to handle temps correctly)
+                for (int i = num_args - 1; i >= 2; i--) {
+                    if (instr->args[i]) {
+                        // For the last arg (i == num_args-1), the value is already in x8 if it's a temp
+                        if (i == num_args - 1 && instr->args[i]->is_temp) {
+                            // x8 already contains this value, no need to load
+                        } else {
+                            emit_load_value(8, instr->args[i]);
+                        }
+                        int offset = (i - 2) * 8;
+                        if (offset == 0) {
+                            emit_instr("mov\tx9, sp");
+                            emit_instr("str\tx8, [x9]");
+                        } else {
+                            emit_instr("str\tx8, [sp, #%d]", offset);
+                        }
+                    }
+                }
+                
+                // Load format string into x1
+                if (instr->args[1]) {
+                    emit_load_value(1, instr->args[1]);
+                }
+                
+                // Load FILE* into x0 (this may clobber x8)
+                if (instr->args[0]) {
+                    emit_load_value(0, instr->args[0]);
+                }
+                
+                if (instr->label) {
+                    emit_call(instr->label);
+                }
+                
+                emit_instr("add\tsp, sp, #%d", stack_size);
             } else {
                 // Normal register-based calling
                 for (int i = 0; i < num_args && i < 4; i++) {
@@ -579,6 +662,7 @@ static void gen_instr(IRInstruction *instr) {
             // Load from [sp, #offset]
             // Strategy: if we have a pending value in x8, save it to x10 first.
             // Also save x9 to x21 (it may have the first operand or return value from previous ops).
+            // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int old_x9_type = x9_temp_type;
                 int offset = (int)instr->result->offset;
@@ -588,9 +672,9 @@ static void gen_instr(IRInstruction *instr) {
                 emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
                 // Use 64-bit load for pointers or parameters, 32-bit for integers
                 if (instr->result->is_pointer || instr->result->param_reg == -2) {
-                    emit_instr("ldr\tx0, [sp, #%d]", offset);  // 64-bit load for pointers
+                    emit_instr("ldr\tx0, [x29, #%d]", offset);  // 64-bit load for pointers, use x29
                 } else {
-                    emit_instr("ldr\tw0, [sp, #%d]", offset);  // 32-bit load for integers
+                    emit_instr("ldr\tw0, [x29, #%d]", offset);  // 32-bit load for integers, use x29
                 }
                 emit_instr("mov\tx8, x0");  // Save loaded value to x8
                 // Also save to x22 if this is a function pointer (for call_indirect)
@@ -610,11 +694,11 @@ static void gen_instr(IRInstruction *instr) {
             // Store value to [sp, #offset]
             // The value is in x8 (from the previous load or const_int)
             // result->offset = stack offset
-            // Use 8-byte store by default for all values to avoid truncation issues
+            // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
-                // Use 8-byte store for all values to avoid pointer truncation
-                emit_instr("str\tx8, [sp, #%d]", offset);
+                // Use 8-byte store for all values to avoid pointer truncation, use x29
+                emit_instr("str\tx8, [x29, #%d]", offset);
             }
             break;
         }
@@ -627,11 +711,12 @@ static void gen_instr(IRInstruction *instr) {
             // Store parameter register to stack slot
             // result->data.int_val = parameter register number (0-3 for x0-x3)
             // result->offset = stack offset
+            // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int param_reg = (int)instr->result->data.int_val;
                 int offset = (int)instr->result->offset;
-                // Store parameter register to [sp, #offset]
-                emit_instr("str\tx%d, [sp, #%d]", param_reg, offset);
+                // Store parameter register to [x29, #offset]
+                emit_instr("str\tx%d, [x29, #%d]", param_reg, offset);
             }
             break;
         }
@@ -740,8 +825,30 @@ static void gen_instr(IRInstruction *instr) {
             break;
             
         case IR_LOAD_EXTERNAL:
+            // Load value from external symbol (like stderr, stdout)
+            // For external symbols, we need to load from GOT
+            // result->is_temp should be true, result->is_pointer should be true
+            if (instr->label) {
+                const char *name = instr->label;
+                // Load the pointer value from GOT
+                // adrp + ldr gives us the address of the variable
+                // then we need another ldr to get the actual value
+                emit_instr("adrp\tx8, _%s@GOTPAGE", name);
+                emit_instr("ldr\tx8, [x8, _%s@GOTPAGEOFF]", name);
+                // For FILE* like stderr, we need to dereference once more
+                // The GOT entry contains the address of stderr,
+                // and stderr itself is a FILE*
+                emit_instr("ldr\tx8, [x8]");
+            }
+            x8_temp_type = 1;
+            if (instr->result) {
+                instr->result->is_temp = true;
+            }
+            break;
+            
         case IR_LOAD_FUNC_ADDR:
-            // Load address of external symbol or function
+        case IR_LOAD_GLOBAL:
+            // Load address of function or static global variable
             // result->is_temp should be true, result->is_pointer should be true
             // instr->label contains the symbol name
             if (instr->label) {

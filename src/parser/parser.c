@@ -2007,17 +2007,7 @@ static ASTNode *parse_primary_expr(Parser *p) {
             return node;
         }
         
-        // Check for stdin, stdout, stderr - treat as null for now
-        if (strcmp(name, "stdin") == 0 || strcmp(name, "stdout") == 0 || strcmp(name, "stderr") == 0) {
-            free(name);
-            advance_p(p);
-            // These are FILE* which we model as void*
-            ASTNode *node = ast_create(AST_INTEGER_LITERAL_EXPR);
-            node->data.int_literal.value = 0;  // Treat as null pointer
-            return node;
-        }
-        
-        // Regular identifier
+        // Regular identifier (including stdin, stdout, stderr as global variables)
         ASTNode *node = ast_create(AST_IDENTIFIER_EXPR);
         node->data.identifier.name = name;
         advance_p(p);

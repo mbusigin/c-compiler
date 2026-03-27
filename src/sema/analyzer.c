@@ -104,6 +104,19 @@ static void declare_builtins(void) {
     
     // wasm_stack_ptr from wasm_emit.h
     symtab_add(current_symtab, "wasm_stack_ptr", SYMBOL_VARIABLE, int_type);
+    
+    // stderr and stdout - FILE* pointers
+    // On macOS, stderr is actually __stderrp, stdout is __stdoutp
+    Type *void_ptr_type = type_create(TYPE_POINTER);
+    void_ptr_type->base = type_create(TYPE_VOID);
+    
+    // Add __stderrp and __stdoutp (actual symbols on macOS)
+    symtab_add(current_symtab, "__stderrp", SYMBOL_VARIABLE, void_ptr_type);
+    symtab_add(current_symtab, "__stdoutp", SYMBOL_VARIABLE, void_ptr_type);
+    
+    // Also add stderr/stdout as aliases (the parser will use __stderrp/__stdoutp)
+    symtab_add(current_symtab, "stderr", SYMBOL_VARIABLE, void_ptr_type);
+    symtab_add(current_symtab, "stdout", SYMBOL_VARIABLE, void_ptr_type);
 }
 
 // Analyze a declaration

@@ -3,100 +3,77 @@
 ## Iteration 1 Summary
 
 ### Goal
-Make self-verify pass for the C compiler. Identify and fix any compiler bugs preventing self-hosting.
+Execute OODA iteration 1/10: make self-verify, identify compiler bugs preventing test completion/execution, fix bugs, journal results.
 
 ### Progress Made
 
-#### ✅ Fixed: 4 Previously Failing Files Now Compile
+#### ✅ Major Bug Fixes
 
-1. **src/target/target.c** - Now compiles successfully
-2. **src/target/arm64/arm64_target.c** - Now compiles successfully  
-3. **src/target/wasm/wasm_target.c** - Now compiles successfully
-4. **src/backend/wasm_codegen.c** - Now compiles successfully
+1. **Stack frame addressing bug** - Changed from SP-relative to FP-relative (x29) addressing
+   - Fixed IR_LOAD_STACK, IR_STORE_STACK, IR_STORE_PARAM to use `[x29, #offset]`
+   - Fixed emit_load_value for local variables
+   - Fixed prologue/epilogue for correct frame pointer setup
 
-**Result:** Stage0 (GCC-compiled) compiler now compiles all 36 source files successfully!
+2. **Printf variadic argument handling** - Fixed multiple issues:
+   - Added support for 3+ arguments in printf calls
+   - Fixed argument ordering to preserve temp values in x8
+   - Fixed stack allocation for variadic args
 
-### Bug Fixes Applied
+3. **Call argument preservation** - Fixed temp value handling
+   - Changed to check ALL remaining arguments (not just next one) for potential x8 modification
+   - Saves temp values to stack when any later argument might modify x8
 
-| # | File | Issue | Fix |
-|---|------|-------|-----|
-| 1 | parser.c | Missing IR types (IRModule, IRFunction, etc.) | Added to builtin types |
-| 2 | target.h | Inline functions using incomplete `Target` typedef | Changed to `struct Target` |
-| 3 | wasm_emit.h | Missing extern for wasm_stack_ptr | Added extern declaration |
-| 4 | analyzer.c | wasm_stack_ptr undeclared | Added to declare_builtins() |
-| 5 | lowerer.c | Struct initializers not handled, storing garbage | Emit zero for unhandled initializers |
-| 6 | codegen.c | IR_SAVE_X8_TO_X20 not implemented | Added case to emit mov x20, x8 |
-| 7 | codegen.c | IR_ADD_X21 not implemented | Added case to emit add x8, x20, x8 |
-| 8 | codegen.c | IR_CALL incorrectly saved x0 to x8 before call | Removed incorrect save |
-| 9 | codegen.c | IR_CONST_INT saved to x20, overwriting saved pointer | Removed save to x20, use x10 only |
+4. **Global variable support** - Added IR_LOAD_EXTERNAL for external globals
+   - Added stderr, stdout as builtin symbols
+   - Uses `adrp + ldr` from GOT for external symbols
+   - Fixed symbol name mapping (stderr -> __stderrp on macOS)
 
-### Stage Compilation Status
+5. **Large stack frame handling** - Fixed ldp/stp offset limits
+   - Added manual address computation for frames > 504 bytes
+
+### Current Status
 
 | Stage | Status |
 |-------|--------|
-| Stage0 (GCC) | ✅ Builds successfully |
-| Stage1 (Self-compiled) | ⚠️ Compiles but crashes at runtime |
+| Stage0 (GCC) | ✅ Builds successfully, compiles all 36/36 files |
+| Stage1 (Self-compiled) | ⚠️ Builds but crashes at runtime due to missing static variable definitions |
 
-### Remaining Issue: Stage1 Runtime Crash
+### Remaining Issues
 
-The self-compiled Stage1 compiler crashes during execution. The crash occurs in `strncmp` with an invalid pointer address.
+1. **Static variable definitions not emitted** - The compiler generates references to static variables (like `arm64_vtable`, `MAX_RECURSION`) but doesn't emit the actual data definitions in the assembly output.
 
-**Root Cause Analysis:**
-Multiple code generation bugs were identified and fixed:
-1. IR_SAVE_X8_TO_X20 and IR_ADD_X21 were not implemented
-2. IR_CALL had incorrect code that saved x0 to x8 before the call
-3. IR_CONST_INT was incorrectly saving to x20, overwriting the saved pointer for array indexing
-
-**Current Status:**
-The generated assembly for array subscript now correctly:
-1. Loads argv
-2. Saves argv to x20
-3. Loads i
-4. Computes i * 8
-5. Adds argv + i*8
-6. Loads from result
-
-However, there's still a crash during execution that needs further investigation.
-
-### Convergence Status
-
-```
-CONVERGENCE: FAIL - stage1 crashes at runtime
-```
+2. **Workaround in place** - Added stub definitions in `runtime.s` for critical static variables, but this is not a proper solution.
 
 ### Files Modified
 
-1. `src/parser/parser.c` - Added IR types to builtin types
-2. `src/sema/analyzer.c` - Added wasm_stack_ptr builtin
-3. `src/target/target.h` - Changed Target* to struct Target*
-4. `src/target/target.c` - Changed Target* to struct Target*
-5. `src/target/arm64/arm64_target.c` - Changed Target* to struct Target*
-6. `src/target/wasm/wasm_target.c` - Changed Target* to struct Target*
-7. `src/backend/wasm_emit.h` - Added wasm_stack_ptr extern
-8. `src/backend/wasm_emit.c` - Added wasm_stack_ptr definition
-9. `src/backend/wasm_codegen.c` - Fixed function definitions
-10. `src/runtime.c` - Removed duplicate wasm_stack_ptr
-11. `src/ir/lowerer.c` - Fixed struct initializer handling
-12. `src/backend/codegen.c` - Fixed multiple IR instruction implementations
+1. `src/backend/codegen.c` - Frame pointer addressing, printf handling, external symbol loading
+2. `src/ir/lowerer.c` - Call argument preservation, global variable handling
+3. `src/sema/analyzer.c` - Added stderr, stdout, __stderrp, __stdoutp builtins
+4. `src/parser/parser.c` - Removed stderr/stdout null-pointer workaround
+5. `src/runtime.s` - Added stubs for global/static variables
 
 ### Next Steps for Iteration 2
 
-1. Debug remaining Stage1 crash using lldb to trace execution
-2. Check if there are more unimplemented IR instructions
-3. Verify string literal handling is correct
-4. Check function call argument passing
-5. Re-test self-verify after fixing all crashes
-6. Verify convergence between stage1 and stage2
+1. Implement proper static/global variable data emission in assembly output
+2. Handle static const variables as compile-time constants (inline them)
+3. Test self-verify after fixing static variable issues
+4. Work towards convergence where stage1 and stage2 produce identical output
 
 ### Test Commands
 
 ```bash
-# Build stage0
-make stage0
+# Build and test
+make clean && make self
 
-# Test compilation of all files
-make self
+# Test stage1
+./build/compiler_stage1 --help
 
-# Test self-verify (will fail until crash is fixed)
+# Full self-verify
 make self-verify
+```
+
+### Convergence Status
+
+```
+CONVERGENCE: IN PROGRESS - Stage1 builds, runtime crashes due to missing static variable definitions
 ```
