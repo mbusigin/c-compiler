@@ -880,6 +880,24 @@ static void lower_variable_decl(ASTNode *node) {
                     }
                 }
             }
+        } else if (node->data.variable.init->type == AST_INITIALIZER_LIST) {
+            // Struct/compound initializer - initialize each member
+            // For now, emit zero for the entire struct to avoid storing garbage
+            // TODO: Properly handle individual field initializers
+            IRValue *zero_val = ir_value_create(IR_VALUE_INT);
+            zero_val->data.int_val = 0;
+            zero_val->is_constant = true;
+            IRInstruction *zero_instr = ir_instr_create(IR_CONST_INT);
+            zero_instr->result = zero_val;
+            add_instr(zero_instr);
+            
+            // Store zero to [sp, #offset]
+            IRValue *result = ir_value_create(IR_VALUE_INT);
+            result->offset = var_offset;
+            result->param_reg = -2;
+            IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+            store_i->result = result;
+            add_instr(store_i);
         } else {
             // Scalar initializer
             // Evaluate initializer → x0 = value, x8 = value

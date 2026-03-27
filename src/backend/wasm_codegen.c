@@ -69,8 +69,7 @@ static int temp_local_for_save_x8 = -1;
 static int temp_local_for_x20 = -1;
 
 // Stack pointer for local arrays - starts at 65536 (64KB)
-// NOTE: Defined in runtime.c to allow linking when compiler compiles itself
-extern int wasm_stack_ptr;
+// Defined in wasm_emit.c
 
 static void reset_local_vars(int param_count) {
     local_var_count = 0;

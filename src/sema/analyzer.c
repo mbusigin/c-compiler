@@ -101,6 +101,9 @@ static void declare_builtins(void) {
     Type *int_type = type_create(TYPE_INT);
     symtab_add(current_symtab, "error_count", SYMBOL_VARIABLE, int_type);
     symtab_add(current_symtab, "warning_count", SYMBOL_VARIABLE, int_type);
+    
+    // wasm_stack_ptr from wasm_emit.h
+    symtab_add(current_symtab, "wasm_stack_ptr", SYMBOL_VARIABLE, int_type);
 }
 
 // Analyze a declaration
@@ -275,6 +278,7 @@ static Type *analyze_expression_with_type(ASTNode *node) {
         case AST_IDENTIFIER_EXPR: {
             Symbol *sym = symtab_lookup(current_symtab, node->data.identifier.name);
             if (!sym) {
+                // Don't auto-declare - let it error
                 error("[%d:%d] undeclared identifier '%s'\n",
                       node->line, node->column, node->data.identifier.name);
                 return NULL;

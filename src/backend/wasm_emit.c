@@ -10,6 +10,9 @@
 
 static int current_indent = 0;
 
+// WASM stack pointer for local arrays - starts at 65536 (64KB)
+int wasm_stack_ptr = 65536;
+
 void wasm_emit(WasmContext *ctx, const char *fmt, ...) {
     if (!ctx || !ctx->out || !fmt) return;
     

@@ -273,10 +273,8 @@ static void gen_instr(IRInstruction *instr) {
             int num_args = instr->num_args;
             bool is_printf = instr->label && strcmp(instr->label, "printf") == 0;
             
-            // Save any existing temp value first
-            if (x8_temp_type == 1) {
-                emit_instr("mov\tx8, x0");  // Save return value
-            }
+            // NOTE: We do NOT save x8 here before the call - the caller should have
+            // already dealt with preserving any needed values. x0-x3 are used for args.
             
             if (is_printf && num_args >= 2) {
                 // For printf:
@@ -641,14 +639,13 @@ static void gen_instr(IRInstruction *instr) {
         case IR_CONST_INT:
             // Emit the constant load
             // Strategy: load constant directly to x8/x9 without touching x0 (which may hold parameters)
-            // x20: save area for preserving x8 (return value or first operand)
+            // x10: used to preserve previous x8 value for binary ops
+            // x20: reserved for explicit saves (IR_SAVE_X8_TO_X20) - don't use here
             // x19: save area for preserving x9 when it had a return value (temp_type == 1)
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
-                int old_x8_type = x8_temp_type;
                 int old_x9_type = x9_temp_type;
-                if (old_x8_type == 1 || old_x8_type == 2) {
-                    emit_instr("mov\tx20, x8");  // Save x8 (return value or first operand)
-                }
+                // Note: We save to x10, NOT x20. x20 is for explicit saves via IR_SAVE_X8_TO_X20.
+                // This prevents overwriting values that were explicitly saved for array indexing.
                 if (old_x9_type == 1) {
                     emit_instr("mov\tx19, x9");  // Save x9 when it had value
                 }
@@ -657,7 +654,6 @@ static void gen_instr(IRInstruction *instr) {
                 emit_immediate(8, instr->result->data.int_val);
                 emit_instr("mov\tx9, x8");   // Copy constant to x9
                 // DON'T restore x8 here - the constant should stay in x8 for the next operation
-                // The saved value in x20 can be restored later if needed by emit_load_binary_args
                 x8_temp_type = 2;  // x8 now has a constant
                 x9_temp_type = 2;  // x9 has the constant
             }
@@ -759,6 +755,37 @@ static void gen_instr(IRInstruction *instr) {
             if (instr->result) {
                 instr->result->is_temp = true;
             }
+            break;
+            
+        case IR_SAVE_X8:
+            // Save x8 to x22 (for post-increment original value)
+            emit_instr("mov\tx22, x8");
+            break;
+            
+        case IR_SAVE_X8_TO_X20:
+            // Save x8 to x20 (preserve pointer across reload)
+            emit_instr("mov\tx20, x8");
+            break;
+            
+        case IR_SAVE_X8_TO_X22:
+            // Save x8 to x22 (callee-saved, for struct member access)
+            emit_instr("mov\tx22, x8");
+            break;
+            
+        case IR_RESTORE_X8_RESULT:
+            // Restore x8 from x21 (for post-increment result)
+            emit_instr("mov\tx8, x21");
+            break;
+            
+        case IR_RESTORE_X8_FROM_X20:
+            // Restore x8 from x20
+            emit_instr("mov\tx8, x20");
+            break;
+            
+        case IR_ADD_X21:
+            // x8 = x20 + x8 (add saved address to offset)
+            emit_instr("add\tx8, x20, x8");
+            x8_temp_type = 1;
             break;
             
         default:

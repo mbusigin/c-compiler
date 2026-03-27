@@ -87,81 +87,81 @@ Target *target_create_arm64(void);
 Target *target_create_wasm(void);
 
 // Target interface functions (call through vtable)
-static inline const char* target_get_name(Target *target) {
+static inline const char* target_get_name(struct Target *target) {
     return target->vtable->get_name(target);
 }
 
-static inline const char* target_get_triple(Target *target) {
+static inline const char* target_get_triple(struct Target *target) {
     return target->vtable->get_triple(target);
 }
 
-static inline bool target_init(Target *target, FILE *output, TargetOptions *options) {
+static inline bool target_init(struct Target *target, FILE *output, TargetOptions *options) {
     return target->vtable->init(target, output, options);
 }
 
-static inline void target_cleanup(Target *target) {
+static inline void target_cleanup(struct Target *target) {
     if (target->vtable->cleanup) {
         target->vtable->cleanup(target);
     }
 }
 
-static inline void target_emit_module_prologue(Target *target, IRModule *module) {
+static inline void target_emit_module_prologue(struct Target *target, IRModule *module) {
     if (target->vtable->emit_module_prologue) {
         target->vtable->emit_module_prologue(target, module);
     }
 }
 
-static inline void target_emit_module_epilogue(Target *target, IRModule *module) {
+static inline void target_emit_module_epilogue(struct Target *target, IRModule *module) {
     if (target->vtable->emit_module_epilogue) {
         target->vtable->emit_module_epilogue(target, module);
     }
 }
 
-static inline void target_emit_function_prologue(Target *target, IRFunction *func) {
+static inline void target_emit_function_prologue(struct Target *target, IRFunction *func) {
     if (target->vtable->emit_function_prologue) {
         target->vtable->emit_function_prologue(target, func);
     }
 }
 
-static inline void target_emit_function_epilogue(Target *target, IRFunction *func) {
+static inline void target_emit_function_epilogue(struct Target *target, IRFunction *func) {
     if (target->vtable->emit_function_epilogue) {
         target->vtable->emit_function_epilogue(target, func);
     }
 }
 
-static inline void target_emit_instruction(Target *target, IRInstruction *instr) {
+static inline void target_emit_instruction(struct Target *target, IRInstruction *instr) {
     if (target->vtable->emit_instruction) {
         target->vtable->emit_instruction(target, instr);
     }
 }
 
-static inline void target_emit_global_variable(Target *target, IRGlobal *global) {
+static inline void target_emit_global_variable(struct Target *target, IRGlobal *global) {
     if (target->vtable->emit_global_variable) {
         target->vtable->emit_global_variable(target, global);
     }
 }
 
-static inline void target_emit_string_literal(Target *target, const char *label, const char *value) {
+static inline void target_emit_string_literal(struct Target *target, const char *label, const char *value) {
     if (target->vtable->emit_string_literal) {
         target->vtable->emit_string_literal(target, label, value);
     }
 }
 
-static inline void target_emit_debug_info(Target *target, ASTNode *ast) {
+static inline void target_emit_debug_info(struct Target *target, ASTNode *ast) {
     if (target->vtable->emit_debug_info) {
         target->vtable->emit_debug_info(target, ast);
     }
 }
 
-static inline size_t target_get_pointer_size(Target *target) {
+static inline size_t target_get_pointer_size(struct Target *target) {
     return target->vtable->get_pointer_size(target);
 }
 
-static inline size_t target_get_stack_alignment(Target *target) {
+static inline size_t target_get_stack_alignment(struct Target *target) {
     return target->vtable->get_stack_alignment(target);
 }
 
-static inline bool target_supports_feature(Target *target, const char *feature) {
+static inline bool target_supports_feature(struct Target *target, const char *feature) {
     return target->vtable->supports_feature(target, feature);
 }
 

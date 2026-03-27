@@ -8,6 +8,9 @@
 #include "wasm_codegen.h"
 #include <stdarg.h>
 
+// WASM stack pointer for local arrays - starts at 65536 (64KB)
+extern int wasm_stack_ptr;
+
 // Emit formatted text to output
 void wasm_emit(WasmContext *ctx, const char *fmt, ...);
 

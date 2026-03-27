@@ -191,6 +191,15 @@ static bool is_builtin_type(const char *name) {
            strcmp(name, "TypedefEntry") == 0 ||
            strcmp(name, "StructEntry") == 0 ||
            strcmp(name, "EnumConstant") == 0 ||
+           // IR types from ir.h
+           strcmp(name, "IRModule") == 0 ||
+           strcmp(name, "IRFunction") == 0 ||
+           strcmp(name, "IRInstruction") == 0 ||
+           strcmp(name, "IRGlobal") == 0 ||
+           strcmp(name, "IRBasicBlock") == 0 ||
+           strcmp(name, "IROpcode") == 0 ||
+           strcmp(name, "IRValue") == 0 ||
+           strcmp(name, "IRValueKind") == 0 ||
            // Enum values from our headers
            strcmp(name, "TYPE_INT") == 0 ||
            strcmp(name, "TYPE_POINTER") == 0 ||
@@ -669,7 +678,12 @@ static Type *parse_type(Parser *p) {
                        strcmp(name, "ASTNodeType") == 0 || strcmp(name, "TypeKind") == 0 ||
                        strcmp(name, "StructMember") == 0 ||
                        strcmp(name, "TypedefEntry") == 0 || strcmp(name, "StructEntry") == 0 ||
-                       strcmp(name, "EnumConstant") == 0) {
+                       strcmp(name, "EnumConstant") == 0 ||
+                       // IR types from ir.h
+                       strcmp(name, "IRModule") == 0 || strcmp(name, "IRFunction") == 0 ||
+                       strcmp(name, "IRInstruction") == 0 || strcmp(name, "IRGlobal") == 0 ||
+                       strcmp(name, "IRBasicBlock") == 0 || strcmp(name, "IROpcode") == 0 ||
+                       strcmp(name, "IRValue") == 0 || strcmp(name, "IRValueKind") == 0) {
                 // These are our own struct/enum types
                 advance_p(p);
                 free(name);

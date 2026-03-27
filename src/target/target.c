@@ -54,7 +54,7 @@ const char **target_get_available_names(int *count) {
 }
 
 // Destroy a target
-void target_destroy(Target *target) {
+void target_destroy(struct Target *target) {
     if (!target) return;
     
     target_cleanup(target);
