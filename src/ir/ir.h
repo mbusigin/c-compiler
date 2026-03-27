@@ -57,7 +57,7 @@ typedef struct IRValue {
 typedef struct IRInstruction {
     IROpcode opcode;
     IRValue *result;
-    IRValue *args[4];
+    IRValue *args[16];  // Support up to 16 arguments (ARM64 ABI: 8 regs + stack args)
     int num_args;
     const char *label;
 } IRInstruction;

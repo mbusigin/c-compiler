@@ -58,7 +58,8 @@ static void prologue(int locals_size) {
     // Save fp/lr/x20/x21 at the top of the frame (highest addresses)
     // Saved at [sp + locals_size]
     // Check if offset is within valid range for stp [-512, 504]
-    if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
+    // Note: We need to check both offsets: locals_size and locals_size + 16
+    if (locals_size >= 0 && locals_size + 16 <= 504 && (locals_size % 8) == 0) {
         emit_instr("stp\tx29, x30, [sp, #%d]", locals_size);  // Save fp/lr above locals
         emit_instr("stp\tx20, x21, [sp, #%d]", locals_size + 16);  // Save x20/x21
     } else {
@@ -82,7 +83,8 @@ static void epilogue(int locals_size) {
     // fp/lr/x20/x21 were saved at [sp, #locals_size] = [x29, #locals_size]
     
     // Check if offset is within valid range for ldp [-512, 504]
-    if (locals_size >= 0 && locals_size <= 504 && (locals_size % 8) == 0) {
+    // Note: We need to check both offsets: locals_size and locals_size + 16
+    if (locals_size >= 0 && locals_size + 16 <= 504 && (locals_size % 8) == 0) {
         emit_instr("ldp\tx20, x21, [x29, #%d]", locals_size + 16);  // Restore x20/x21
         emit_instr("ldp\tx29, x30, [x29, #%d]", locals_size);  // Restore fp/lr
     } else {
@@ -393,12 +395,41 @@ static void gen_instr(IRInstruction *instr) {
                 emit_instr("add\tsp, sp, #%d", stack_size);
             } else {
                 // Normal register-based calling
-                for (int i = 0; i < num_args && i < 4; i++) {
+                // ARM64 passes first 8 args in registers (x0-x7), rest on stack
+                
+                // Calculate stack space needed for args beyond 8
+                int stack_args = num_args > 8 ? num_args - 8 : 0;
+                int stack_size = (stack_args * 8 + 15) & ~15;
+                if (stack_size > 0) {
+                    emit_instr("sub\tsp, sp, #%d", stack_size);
+                }
+                
+                // Store args beyond 8 on the stack (in reverse order for consistency)
+                for (int i = num_args - 1; i >= 8; i--) {
+                    if (instr->args[i]) {
+                        emit_load_value(8, instr->args[i]);
+                        int offset = (i - 8) * 8;
+                        if (offset == 0) {
+                            emit_instr("mov\tx9, sp");
+                            emit_instr("str\tx8, [x9]");
+                        } else {
+                            emit_instr("str\tx8, [sp, #%d]", offset);
+                        }
+                    }
+                }
+                
+                // Pass first 8 args in registers x0-x7
+                for (int i = 0; i < num_args && i < 8; i++) {
                     emit_load_value(i, instr->args[i]);
                 }
                 
                 if (instr->label) {
                     emit_call(instr->label);
+                }
+                
+                // Restore stack if we allocated for stack args
+                if (stack_size > 0) {
+                    emit_instr("add\tsp, sp, #%d", stack_size);
                 }
             }
             
@@ -678,10 +709,20 @@ static void gen_instr(IRInstruction *instr) {
                 }
                 emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
                 // Use 64-bit load for pointers or parameters, 32-bit for integers
-                if (instr->result->is_pointer || instr->result->param_reg == -2) {
-                    emit_instr("ldr\tx0, [x29, #%d]", offset);  // 64-bit load for pointers, use x29
+                // For large offsets (> 504), use indirect addressing
+                if (offset > 504 || offset < -512) {
+                    emit_instr("add\tx0, x29, #%d", offset);
+                    if (instr->result->is_pointer || instr->result->param_reg == -2) {
+                        emit_instr("ldr\tx0, [x0]");  // 64-bit load for pointers
+                    } else {
+                        emit_instr("ldr\tw0, [x0]");  // 32-bit load for integers
+                    }
                 } else {
-                    emit_instr("ldr\tw0, [x29, #%d]", offset);  // 32-bit load for integers, use x29
+                    if (instr->result->is_pointer || instr->result->param_reg == -2) {
+                        emit_instr("ldr\tx0, [x29, #%d]", offset);  // 64-bit load for pointers, use x29
+                    } else {
+                        emit_instr("ldr\tw0, [x29, #%d]", offset);  // 32-bit load for integers, use x29
+                    }
                 }
                 emit_instr("mov\tx8, x0");  // Save loaded value to x8
                 // Also save to x22 if this is a function pointer (for call_indirect)
@@ -704,8 +745,14 @@ static void gen_instr(IRInstruction *instr) {
             // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
-                // Use 8-byte store for all values to avoid pointer truncation, use x29
-                emit_instr("str\tx8, [x29, #%d]", offset);
+                // For large offsets (> 504), use indirect addressing
+                if (offset > 504 || offset < -512) {
+                    emit_instr("add\tx9, x29, #%d", offset);
+                    emit_instr("str\tx8, [x9]");  // Store via computed address
+                } else {
+                    // Use 8-byte store for all values to avoid pointer truncation, use x29
+                    emit_instr("str\tx8, [x29, #%d]", offset);
+                }
             }
             break;
         }
@@ -722,8 +769,14 @@ static void gen_instr(IRInstruction *instr) {
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int param_reg = (int)instr->result->data.int_val;
                 int offset = (int)instr->result->offset;
-                // Store parameter register to [x29, #offset]
-                emit_instr("str\tx%d, [x29, #%d]", param_reg, offset);
+                // For large offsets (> 504), use indirect addressing
+                if (offset > 504 || offset < -512) {
+                    emit_instr("add\tx9, x29, #%d", offset);
+                    emit_instr("str\tx%d, [x9]", param_reg);  // Store via computed address
+                } else {
+                    // Store parameter register to [x29, #offset]
+                    emit_instr("str\tx%d, [x29, #%d]", param_reg, offset);
+                }
             }
             break;
         }
@@ -748,6 +801,19 @@ static void gen_instr(IRInstruction *instr) {
                 // DON'T restore x8 here - the constant should stay in x8 for the next operation
                 x8_temp_type = 2;  // x8 now has a constant
                 x9_temp_type = 2;  // x9 has the constant
+            }
+            break;
+
+        case IR_CONST_STRING:
+            // Load a string literal address into x8
+            // result->string_index contains the string index
+            if (instr->result) {
+                emit_instr("mov\tx10, x8");  // Save previous x8
+                emit_instr("adrp\tx8, l_.str%d@PAGE", instr->result->string_index);
+                emit_instr("add\tx8, x8, l_.str%d@PAGEOFF", instr->result->string_index);
+                emit_instr("mov\tx9, x8");   // Copy to x9
+                x8_temp_type = 2;  // x8 has a string address
+                x9_temp_type = 2;
             }
             break;
 
@@ -919,7 +985,9 @@ static void gen_block(IRBasicBlock *block) {
 // Generate code for a function
 static void gen_function(IRFunction *func) {
     // Calculate total locals size
+    // Need to count both IR_ALLOCA instructions AND parameter stack slots
     int locals_size = 0;
+    int max_param_offset = 0;
     for (size_t i = 0; i < list_size(func->blocks); i++) {
         IRBasicBlock *block = list_get(func->blocks, i);
         for (size_t j = 0; j < list_size(block->instructions); j++) {
@@ -927,6 +995,21 @@ static void gen_function(IRFunction *func) {
             if (instr->opcode == IR_ALLOCA && instr->result && instr->result->is_constant) {
                 locals_size += (int)instr->result->data.int_val;
             }
+            // Also track parameter offsets for IR_STORE_PARAM
+            if (instr->opcode == IR_STORE_PARAM && instr->result) {
+                int offset = (int)instr->result->offset;
+                if (offset > max_param_offset) {
+                    max_param_offset = offset;
+                }
+            }
+        }
+    }
+    // Add parameter stack space (max_param_offset + 8 for the last parameter's slot)
+    // Note: We use >= 0 because offset 0 means 1 parameter at that offset
+    if (max_param_offset >= 0) {
+        int param_space = max_param_offset + 8;
+        if (param_space > locals_size) {
+            locals_size = param_space;
         }
     }
     

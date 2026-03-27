@@ -1095,24 +1095,18 @@ static IRValue *lower_call_expr(ASTNode *node) {
     // For indirect calls, args start at index 1 (index 0 is the function pointer)
     // For direct calls, args start at index 0
     int arg_start_idx = is_indirect_call ? 1 : 0;
-    int max_args = is_indirect_call ? 3 : 4;  // x1-x3 for indirect, x0-x3 for direct
+    int max_args = is_indirect_call ? 7 : 8;  // x1-x7 for indirect, x0-x7 for direct (ARM64 ABI)
     
     for (size_t i = 0; i < list_size(node->data.call.args); i++) {
         IRValue *arg = lower_expression(list_get(node->data.call.args, i));
         
         // Check if ANY remaining argument (not just the next one) will modify x8.
-        // We need to save this temp if there are any non-string-literal args remaining.
+        // We need to save this temp if there are more arguments remaining.
+        // NOTE: Even string literals modify x8 (they emit adrp/add instructions)
         bool remaining_args_preserve_x8 = true;
         if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1) {
-            // Check all remaining arguments
-            for (size_t j = i + 1; j < list_size(node->data.call.args); j++) {
-                ASTNode *remaining_arg = list_get(node->data.call.args, j);
-                if (remaining_arg && remaining_arg->type != AST_STRING_LITERAL_EXPR) {
-                    // This remaining argument will emit IR and may modify x8
-                    remaining_args_preserve_x8 = false;
-                    break;
-                }
-            }
+            // There are more arguments after this one, they will clobber x8
+            remaining_args_preserve_x8 = false;
         }
         
         // If this argument is a temp and remaining arguments might modify x8,
@@ -1406,9 +1400,17 @@ static IRValue *lower_expression(ASTNode *node) {
             jmp_if->label = else_label;
             add_instr(jmp_if);
 
-            // Then branch: evaluate then_expr, result goes to x8
+            // Then branch: evaluate then_expr
             IRValue *then_val = lower_expression(node->data.conditional.then_expr);
-            (void)then_val;  // Result is already in x8
+            // If then_val is a string literal or constant, emit an instruction to load it into x8
+            if (then_val && then_val->kind == IR_VALUE_STRING) {
+                IRInstruction *load_str = ir_instr_create(IR_CONST_STRING);
+                load_str->result = ir_value_create(IR_VALUE_INT);
+                load_str->result->is_temp = true;
+                load_str->result->is_pointer = true;
+                load_str->result->string_index = then_val->string_index;
+                add_instr(load_str);
+            }
 
             // Jump to end
             IRInstruction *jmp_end = ir_instr_create(IR_JMP);
@@ -1420,9 +1422,17 @@ static IRValue *lower_expression(ASTNode *node) {
             else_lbl->label = else_label;
             add_instr(else_lbl);
 
-            // Else branch: evaluate else_expr, result goes to x8
+            // Else branch: evaluate else_expr
             IRValue *else_val = lower_expression(node->data.conditional.else_expr);
-            (void)else_val;  // Result is already in x8
+            // If else_val is a string literal or constant, emit an instruction to load it into x8
+            if (else_val && else_val->kind == IR_VALUE_STRING) {
+                IRInstruction *load_str = ir_instr_create(IR_CONST_STRING);
+                load_str->result = ir_value_create(IR_VALUE_INT);
+                load_str->result->is_temp = true;
+                load_str->result->is_pointer = true;
+                load_str->result->string_index = else_val->string_index;
+                add_instr(load_str);
+            }
 
             // End label: x8 contains the result from whichever branch was taken
             IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
@@ -1853,13 +1863,9 @@ static void lower_function(ASTNode *node) {
             
             param_count++;
             
-            // Allocate stack space
-            IRValue *size_val = ir_value_create(IR_VALUE_INT);
-            size_val->data.int_val = 8;
-            size_val->is_constant = true;
-            IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
-            alloc_instr->result = size_val;
-            add_instr(alloc_instr);
+            // NOTE: Do NOT emit IR_ALLOCA for parameters - they are stored to stack
+            // via IR_STORE_PARAM, not allocated. The locals_size increment above
+            // is still needed for calculating total stack frame size.
         }
     }
 
@@ -1870,8 +1876,18 @@ static void lower_function(ASTNode *node) {
     
     // Add implicit return for functions that don't end with one
     // This is needed for void functions and functions that fall off the end
-    IRInstruction *ret_void = ir_instr_create(IR_RET_VOID);
-    add_instr(ret_void);
+    // But don't add if the function already ends with a ret instruction
+    bool needs_ret_void = true;
+    if (current_block && list_size(current_block->instructions) > 0) {
+        IRInstruction *last = list_get(current_block->instructions, list_size(current_block->instructions) - 1);
+        if (last->opcode == IR_RET || last->opcode == IR_RET_VOID) {
+            needs_ret_void = false;
+        }
+    }
+    if (needs_ret_void) {
+        IRInstruction *ret_void = ir_instr_create(IR_RET_VOID);
+        add_instr(ret_void);
+    }
 
     // Restore
     current_function = prev_func;

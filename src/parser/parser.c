@@ -940,6 +940,20 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
             break;
         }
         ASTNode *param = parse_parameter(p);
+        
+        // In C, (void) means no parameters, not a parameter of type void
+        // Check if this is a void parameter with no name
+        if (param->data.parameter.param_type && 
+            param->data.parameter.param_type->kind == TYPE_VOID &&
+            list_size(func->data.function.params) == 0 &&
+            (!param->data.parameter.name || param->data.parameter.name[0] == '\0')) {
+            // This is (void) - skip adding this parameter
+            // Free the parameter node
+            free((void*)param->data.parameter.name);
+            free(param);
+            break;
+        }
+        
         list_push(func->data.function.params, param);
         if (check_p(p, TOKEN_COMMA)) {
             advance_p(p);

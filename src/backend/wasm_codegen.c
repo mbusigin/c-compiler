@@ -720,14 +720,11 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
                     
                     // Emit body (between JMP_IF and JMP)
                     int j = jmp_if_idx + 1;
-                    int last_was_restore = 0;
+                    // NOTE: IR_RESTORE_X8_RESULT does not emit a value to WASM stack,
+                    // so no drop is needed. The ARM64 version just restores a register.
                     while (j < jmp_idx) {
                         emit_instr(ctx, all_instrs[j]);
-                        last_was_restore = (all_instrs[j]->opcode == IR_RESTORE_X8_RESULT);
                         j++;
-                    }
-                    if (last_was_restore) {
-                        wasm_emit_instr(ctx, "drop");
                     }
                     
                     // Branch back to loop start
@@ -782,18 +779,12 @@ void wasm_emit_function_body(WasmContext *ctx, IRFunction *func) {
 
             // Emit the then block (instructions after JMP_IF until else label or JMP)
             int j = i + 1;
-            int last_was_restore = 0;
+            // NOTE: IR_RESTORE_X8_RESULT does not emit a value to WASM stack,
+            // so no drop is needed. The ARM64 version just restores a register.
             while (j < instr_count && all_instrs[j]->opcode != IR_LABEL &&
                    all_instrs[j]->opcode != IR_JMP) {
                 emit_instr(ctx, all_instrs[j]);
-                last_was_restore = (all_instrs[j]->opcode == IR_RESTORE_X8_RESULT);
                 j++;
-            }
-            
-            // If the then block left a value on the stack (from post-increment/decrement),
-            // drop it since if blocks shouldn't produce values
-            if (last_was_restore) {
-                wasm_emit_instr(ctx, "drop");
             }
 
             if (has_else) {

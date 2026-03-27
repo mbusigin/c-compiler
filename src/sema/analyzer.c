@@ -473,8 +473,10 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             if (node->data.conditional.else_expr) {
                 else_type = analyze_expression_with_type(node->data.conditional.else_expr);
             }
-            // Return the more "promoted" type
-            return then_type ? then_type : else_type;
+            // Set the result type on the node
+            Type *result_type = then_type ? then_type : else_type;
+            node->type_info = result_type;
+            return result_type;
         }
         
         case AST_COMMA_EXPR: {
