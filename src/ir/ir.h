@@ -22,13 +22,14 @@ typedef enum {
     IR_LOAD_STACK, IR_STORE_STACK,
     IR_STORE_PARAM,  // Store parameter register to stack slot
     IR_SAVE_X8,  // Save x8 to x22 (for post-increment original value)
-    IR_RESTORE_X8_RESULT,  // Restore result from x22 after post-increment
+    IR_RESTORE_X8_RESULT,  // Restore result from x21 after post-increment
+    IR_RESTORE_X8_FROM_X22,  // Restore x8 from x22
     IR_SAVE_X8_TO_X20,  // Save x8 to x20 (preserve pointer across reload)
     IR_RESTORE_X8_FROM_X20,  // Restore x8 from x20
     IR_LOAD_OFFSET,   // Load from [base_ptr + offset*4]
     IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
-    IR_STORE_INDIRECT, // Store x8 to [x20] (address in x20, value in x8)
-    IR_STORE_INDIRECT_X22, // Store x8 to [x22] (address in x22, value in x8)
+    IR_STORE_INDIRECT, // Store x8 to [x22] (address in x22, value in x8)
+    IR_STORE_INDIRECT_X20, // Store x8 to [x20] (address in x20, value in x8)
     IR_LOAD_STRING,    // Load string address into x8
     IR_SAVE_X8_TO_X22, // Save x8 to x22 (callee-saved, for struct member access)
     IR_LEA,           // Load effective address: x8 = sp + offset
@@ -75,6 +76,7 @@ typedef struct IRFunction {
     List *params;
     List *blocks;
     bool is_static;  // True if function has static storage class
+    bool is_variadic; // True if function accepts variadic arguments
 } IRFunction;
 
 typedef struct IRGlobal {

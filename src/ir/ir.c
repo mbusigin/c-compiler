@@ -55,6 +55,7 @@ static const char *op_name(IROpcode op) {
         case IR_STORE_PARAM: return "store_param";
         case IR_SAVE_X8: return "save_x8";
         case IR_RESTORE_X8_RESULT: return "restore_x8_result";
+        case IR_RESTORE_X8_FROM_X22: return "restore_x8_from_x22";
         case IR_SAVE_X8_TO_X20: return "save_x8_to_x20";
         case IR_RESTORE_X8_FROM_X20: return "restore_x8_from_x20";
         case IR_LOAD_OFFSET: return "load_offset";
@@ -73,7 +74,7 @@ static const char *op_name(IROpcode op) {
         case IR_LOAD_GLOBAL: return "load_global";
         case IR_STORE_GLOBAL: return "store_global";
         case IR_SAVE_X8_TO_X22: return "save_x8_to_x22";
-        case IR_STORE_INDIRECT_X22: return "store_indirect_x22";
+        case IR_STORE_INDIRECT_X20: return "store_indirect_x20";
         default: return "unknown";
     }
 }

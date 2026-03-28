@@ -938,7 +938,15 @@ static ASTNode *parse_function_body(Parser *p) {
 static ASTNode *parse_function_definition(Parser *p, Type *return_type, const char *name) {
     ASTNode *func = ast_create(AST_FUNCTION_DECL);
     func->data.function.name = xstrdup(name);
-    func->data.function.func_type = return_type;
+    
+    // Create the actual function type (not just the return type)
+    Type *func_type = type_create(TYPE_FUNCTION);
+    func_type->return_type = return_type;
+    func_type->param_types = NULL;
+    func_type->num_params = 0;
+    func_type->is_variadic = false;
+    
+    func->data.function.func_type = func_type;
     func->data.function.params = list_create();
     
     // Parse parameters (already consumed '(')
@@ -947,9 +955,7 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
         if (check_p(p, TOKEN_ELLIPSIS)) {
             advance_p(p);  // consume ...
             // Mark function as variadic
-            if (func->data.function.func_type) {
-                func->data.function.func_type->is_variadic = true;
-            }
+            func_type->is_variadic = true;
             break;
         }
         ASTNode *param = parse_parameter(p);
@@ -976,6 +982,9 @@ static ASTNode *parse_function_definition(Parser *p, Type *return_type, const ch
     }
     expect(p, TOKEN_RPAREN, "expected ')'");
     advance_p(p); // consume RPAREN
+    
+    // Update function type with param count
+    func_type->num_params = list_size(func->data.function.params);
     
     // Skip __attribute__((...)) if present
     skip_attribute(p);
@@ -1251,6 +1260,13 @@ static ASTNode *parse_declaration(Parser *p) {
         p->current = saved_current;
     }
     
+    // Handle pointer modifiers: char *p, int **pp, etc.
+    while (check_p(p, TOKEN_STAR)) {
+        advance_p(p);
+        Type *ptr = type_pointer(base_type);
+        base_type = ptr;
+    }
+    
     // Check for simple identifier
     if (check_p(p, TOKEN_IDENTIFIER)) {
         // Use token length to copy exactly the right number of characters
@@ -1275,14 +1291,21 @@ static ASTNode *parse_declaration(Parser *p) {
     // Handle array declarator: int arr[5]
     while (check_p(p, TOKEN_LBRACKET)) {
         advance_p(p);  // consume '['
-        // Skip the array size expression (we don't support it yet, just skip to ']')
-        while (!check_p(p, TOKEN_RBRACKET) && !check_p(p, TOKEN_EOF)) {
+        size_t array_size = 0;
+        // Parse the array size expression
+        if (check_p(p, TOKEN_NUMBER) || check_p(p, TOKEN_INT_CONSTANT)) {
+            array_size = (size_t)p->current.value.int_val;
+            advance_p(p);
+        } else if (check_p(p, TOKEN_IDENTIFIER)) {
+            // Handle constant expression (identifier)
+            // For now, just skip it
             advance_p(p);
         }
         if (check_p(p, TOKEN_RBRACKET)) advance_p(p);  // consume ']'
-        // Convert to pointer type
-        Type *ptr = type_pointer(base_type);
-        base_type = ptr;
+        // Create array type
+        if (array_size > 0 && base_type) {
+            base_type = type_array(base_type, array_size);
+        }
     }
     
     // Variable declaration
@@ -1833,14 +1856,14 @@ static ASTNode *parse_unary_expr(Parser *p) {
     if (check_p(p, TOKEN_MINUS)) {
         advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
-        node->data.unary.op = 1;  // Unary minus
+        node->data.unary.op = 9;  // Unary minus (distinct from prefix decrement)
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }
     if (check_p(p, TOKEN_PLUS)) {
         advance_p(p);
         ASTNode *node = ast_create(AST_UNARY_EXPR);
-        node->data.unary.op = 0;  // Unary plus
+        node->data.unary.op = 8;  // Unary plus (distinct from prefix increment)
         node->data.unary.operand = parse_postfix_expr(p);
         return node;
     }

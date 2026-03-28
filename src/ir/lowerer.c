@@ -667,6 +667,30 @@ static IRValue *lower_unary_expr(ASTNode *node) {
         case 3: {  // ~ (bitwise NOT) - not in tests, skip
             return operand;
         }
+        case 4: {  // * (dereference)
+            // Dereference a pointer - load the value at the address in x8
+            bool is_byte = false;
+            bool is_64bit = false;
+            bool is_pointer = false;
+            if (node->type_info) {
+                Type *t = node->type_info;
+                if (t->kind == TYPE_CHAR) is_byte = true;
+                else if (t->kind == TYPE_LONG || t->kind == TYPE_LONGLONG) is_64bit = true;
+                else if (t->kind == TYPE_POINTER) { is_64bit = true; is_pointer = true; }
+            }
+            
+            IRInstruction *load_instr = ir_instr_create(IR_LOAD);
+            load_instr->result = ir_value_create(IR_VALUE_INT);
+            load_instr->result->is_constant = false;
+            load_instr->result->is_temp = true;
+            load_instr->result->is_byte = is_byte;
+            load_instr->result->is_64bit = is_64bit;
+            load_instr->result->is_pointer = is_pointer;
+            load_instr->args[0] = operand;
+            load_instr->num_args = 1;
+            add_instr(load_instr);
+            return load_instr->result;
+        }
         case 6: {  // ++ (postfix increment)
             // For post-increment: increment and store, return ORIGINAL value.
             // Save the current x8 (which has the loaded value) to x21
@@ -837,6 +861,33 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
         ASTNode *base_node = lhs->data.subscript.array;
         ASTNode *index_node = lhs->data.subscript.index;
         
+        // Determine element size from base type
+        int elem_size = 4;  // Default to int size
+        if (base_node && base_node->type_info) {
+            Type *base_type = base_node->type_info;
+            if (base_type->kind == TYPE_POINTER && base_type->base) {
+                switch (base_type->base->kind) {
+                    case TYPE_CHAR: elem_size = 1; break;
+                    case TYPE_SHORT: elem_size = 2; break;
+                    case TYPE_INT: elem_size = 4; break;
+                    case TYPE_LONG:
+                    case TYPE_LONGLONG: elem_size = 8; break;
+                    case TYPE_POINTER: elem_size = 8; break;
+                    default: elem_size = 4; break;
+                }
+            } else if (base_type->kind == TYPE_ARRAY && base_type->base) {
+                switch (base_type->base->kind) {
+                    case TYPE_CHAR: elem_size = 1; break;
+                    case TYPE_SHORT: elem_size = 2; break;
+                    case TYPE_INT: elem_size = 4; break;
+                    case TYPE_LONG:
+                    case TYPE_LONGLONG: elem_size = 8; break;
+                    case TYPE_POINTER: elem_size = 8; break;
+                    default: elem_size = 4; break;
+                }
+            }
+        }
+        
         if (base_node && base_node->type == AST_IDENTIFIER_EXPR) {
             const char *base_name = base_node->data.identifier.name;
             
@@ -849,9 +900,9 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 // Evaluate index
                 IRValue *index_val = lower_expression(index_node);
                 
-                // Scale index by 4
+                // Scale index by element size
                 IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                scale_val->data.int_val = 4;
+                scale_val->data.int_val = elem_size;
                 scale_val->is_constant = true;
 
                 scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
@@ -859,7 +910,7 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 scale_instr->result = scale_val;
                 add_instr(scale_instr);
                 
-                // index * 4
+                // index * elem_size
                 IRInstruction *mul_instr = ir_instr_create(IR_MUL);
                 mul_instr->result = ir_value_create(IR_VALUE_INT);
                 mul_instr->result->is_constant = false;
@@ -869,7 +920,7 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 mul_instr->num_args = 2;
                 add_instr(mul_instr);
                 
-                // Save offset to x21
+                // Save offset to temp slot
                 IRInstruction *save_offset = ir_instr_create(IR_SAVE_X8);
                 add_instr(save_offset);
                 
@@ -878,12 +929,20 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 load_ptr->result = ptr_val;
                 add_instr(load_ptr);
                 
-                // Add pointer + offset
+                // Save pointer to x20
+                IRInstruction *save_ptr = ir_instr_create(IR_SAVE_X8_TO_X20);
+                add_instr(save_ptr);
+                
+                // Restore offset from temp slot
+                IRInstruction *restore_offset = ir_instr_create(IR_RESTORE_X8_RESULT);
+                add_instr(restore_offset);
+                
+                // Add pointer + offset (x8 = x20 + x8)
                 IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
                 add_i->result = ir_value_create(IR_VALUE_INT);
                 add_instr(add_i);
                 
-                // Save address to x21
+                // Save address to temp slot
                 IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
                 add_instr(save_addr);
                 
@@ -891,9 +950,10 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 IRValue *rhs_val = lower_expression(node->data.assignment.right);
                 UNUSED(rhs_val);
                 
-                // Store through x21
+                // Store through temp slot
                 IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
                 store_indirect->result = ir_value_create(IR_VALUE_INT);
+                store_indirect->result->elem_size = elem_size;  // Pass element size for correct store width
                 add_instr(store_indirect);
                 
                 IRValue *ret_val = ir_value_create(IR_VALUE_INT);
@@ -905,14 +965,14 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
             // Check if base is a local variable (array)
             LocalVar *lv = locals_lookup(base_name);
             if (lv) {
-                // Local array - compute address as sp + offset + index*4
+                // Local array - compute address as sp + offset + index*elem_size
                 
                 // Step 1: Evaluate index
                 IRValue *index_val = lower_expression(index_node);
                 
-                // Step 2: Scale index by 4 (sizeof int)
+                // Step 2: Scale index by element size
                 IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                scale_val->data.int_val = 4;
+                scale_val->data.int_val = elem_size;
                 scale_val->is_constant = true;
 
                 scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
@@ -930,7 +990,7 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 mul_instr->num_args = 2;
                 add_instr(mul_instr);
                 
-                // Step 4: Save offset (in x8) to x21
+                // Step 4: Save offset (in x8) to temp slot
                 IRInstruction *save_offset = ir_instr_create(IR_SAVE_X8);
                 add_instr(save_offset);
                 
@@ -943,22 +1003,31 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 addr_instr->result = addr_val;
                 add_instr(addr_instr);
                 
-                // Step 6: Add address + offset (x8 = x8 + x21)
+                // Step 6: Save base address to x20
+                IRInstruction *save_base = ir_instr_create(IR_SAVE_X8_TO_X20);
+                add_instr(save_base);
+                
+                // Step 7: Restore offset from temp slot
+                IRInstruction *restore_offset = ir_instr_create(IR_RESTORE_X8_RESULT);
+                add_instr(restore_offset);
+                
+                // Step 8: Add address + offset (x8 = x20 + x8)
                 IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
                 add_i->result = ir_value_create(IR_VALUE_INT);
                 add_instr(add_i);
                 
-                // Step 7: Save computed address to x21
+                // Step 9: Save computed address to temp slot
                 IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
                 add_instr(save_addr);
                 
-                // Step 8: Evaluate RHS value
+                // Step 10: Evaluate RHS value
                 IRValue *rhs_val = lower_expression(node->data.assignment.right);
                 UNUSED(rhs_val);  // Value is now in x8
                 
-                // Step 9: Store through address in x21
+                // Step 11: Store through temp slot
                 IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
                 store_indirect->result = ir_value_create(IR_VALUE_INT);
+                store_indirect->result->elem_size = elem_size;  // Pass element size for correct store width
                 add_instr(store_indirect);
                 
                 IRValue *ret_val = ir_value_create(IR_VALUE_INT);
@@ -972,6 +1041,150 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
         ret_val->is_constant = false;
         ret_val->is_temp = true;
         return ret_val;
+    } else if (lhs && lhs->type == AST_MEMBER_ACCESS_EXPR) {
+        // Handle struct member assignment: struct_var.member = value
+        ASTNode *base = lhs->data.member.expr;
+        size_t member_offset = lhs->data.member.member_offset;
+        
+        if (base && base->type == AST_IDENTIFIER_EXPR) {
+            const char *name = base->data.identifier.name;
+            LocalVar *lv = locals_lookup(name);
+            if (lv) {
+                // Get member address
+                IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                addr_val->offset = lv->offset + member_offset;
+                addr_val->is_constant = false;
+                addr_val->is_temp = true;
+                IRInstruction *addr_instr = ir_instr_create(IR_LEA);
+                addr_instr->result = addr_val;
+                add_instr(addr_instr);
+                
+                // Save address to x22
+                IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
+                add_instr(save_addr);
+                
+                // Evaluate RHS
+                IRValue *rhs_val = lower_expression(node->data.assignment.right);
+                UNUSED(rhs_val);
+                
+                // Store through x22
+                IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
+                store_indirect->result = ir_value_create(IR_VALUE_INT);
+                // Set element size based on member type
+                if (lhs->type_info) {
+                    switch (lhs->type_info->kind) {
+                        case TYPE_CHAR: store_indirect->result->elem_size = 1; break;
+                        case TYPE_SHORT: store_indirect->result->elem_size = 2; break;
+                        case TYPE_INT: store_indirect->result->elem_size = 4; break;
+                        case TYPE_LONG:
+                        case TYPE_LONGLONG:
+                        case TYPE_POINTER: store_indirect->result->elem_size = 8; break;
+                        default: store_indirect->result->elem_size = 8; break;
+                    }
+                } else {
+                    store_indirect->result->elem_size = 8;  // Default to 64-bit
+                }
+                add_instr(store_indirect);
+                
+                IRValue *ret = ir_value_create(IR_VALUE_INT);
+                ret->is_constant = false;
+                ret->is_temp = true;
+                return ret;
+            }
+        }
+    } else if (lhs && lhs->type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+        // Handle pointer member assignment: ptr->member = value
+        ASTNode *base = lhs->data.member.expr;
+        size_t member_offset = lhs->data.member.member_offset;
+        
+        // Evaluate pointer expression
+        IRValue *base_val = lower_expression(base);
+        (void)base_val;
+        
+        // Add member offset if needed
+        if (member_offset > 0) {
+            IRValue *offset_val = ir_value_create(IR_VALUE_INT);
+            offset_val->is_constant = true;
+            offset_val->data.int_val = (long long)member_offset;
+            IRInstruction *offset_add = ir_instr_create(IR_ADD_IMM64);
+            offset_add->result = ir_value_create(IR_VALUE_INT);
+            offset_add->args[0] = base_val;
+            offset_add->args[1] = offset_val;
+            offset_add->num_args = 2;
+            add_instr(offset_add);
+        }
+        
+        // Save address to x22
+        IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
+        add_instr(save_addr);
+        
+        // Evaluate RHS
+        IRValue *rhs_val = lower_expression(node->data.assignment.right);
+        UNUSED(rhs_val);
+        
+        // Store through x22
+        IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
+        store_indirect->result = ir_value_create(IR_VALUE_INT);
+        // Set element size based on member type
+        if (lhs->type_info) {
+            switch (lhs->type_info->kind) {
+                case TYPE_CHAR: store_indirect->result->elem_size = 1; break;
+                case TYPE_SHORT: store_indirect->result->elem_size = 2; break;
+                case TYPE_INT: store_indirect->result->elem_size = 4; break;
+                case TYPE_LONG:
+                case TYPE_LONGLONG:
+                case TYPE_POINTER: store_indirect->result->elem_size = 8; break;
+                default: store_indirect->result->elem_size = 8; break;
+            }
+        } else {
+            store_indirect->result->elem_size = 8;  // Default to 64-bit
+        }
+        add_instr(store_indirect);
+        
+        IRValue *ret = ir_value_create(IR_VALUE_INT);
+        ret->is_constant = false;
+        ret->is_temp = true;
+        return ret;
+    } else if (lhs && lhs->type == AST_UNARY_EXPR && lhs->data.unary.op == 4) {
+        // Handle dereference assignment: *ptr = value
+        // The unary operator 4 is DEREF (*)
+        ASTNode *operand = lhs->data.unary.operand;
+        
+        // Evaluate the pointer expression (gives us the address)
+        IRValue *ptr_val = lower_expression(operand);
+        (void)ptr_val;  // Address is now in x8
+        
+        // Save address to temp slot
+        IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
+        add_instr(save_addr);
+        
+        // Evaluate RHS
+        IRValue *rhs_val = lower_expression(node->data.assignment.right);
+        (void)rhs_val;  // Value is now in x8
+        
+        // Store through temp slot
+        IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
+        store_indirect->result = ir_value_create(IR_VALUE_INT);
+        // Set element size based on the pointed-to type
+        if (lhs->type_info) {
+            switch (lhs->type_info->kind) {
+                case TYPE_CHAR: store_indirect->result->elem_size = 1; break;
+                case TYPE_SHORT: store_indirect->result->elem_size = 2; break;
+                case TYPE_INT: store_indirect->result->elem_size = 4; break;
+                case TYPE_LONG:
+                case TYPE_LONGLONG:
+                case TYPE_POINTER: store_indirect->result->elem_size = 8; break;
+                default: store_indirect->result->elem_size = 8; break;
+            }
+        } else {
+            store_indirect->result->elem_size = 8;  // Default to 64-bit
+        }
+        add_instr(store_indirect);
+        
+        IRValue *ret = ir_value_create(IR_VALUE_INT);
+        ret->is_constant = false;
+        ret->is_temp = true;
+        return ret;
     }
     
     // Simple case: just return the value
@@ -1034,6 +1247,22 @@ static void lower_variable_decl(ASTNode *node) {
     if (node->data.variable.init) {
         // Check if this is an array initializer list
         if (is_array && node->data.variable.init->type == AST_INITIALIZER_LIST) {
+            // Determine element size from array type
+            int elem_size = 4;  // Default to int size
+            if (node->data.variable.var_type && 
+                node->data.variable.var_type->kind == TYPE_ARRAY &&
+                node->data.variable.var_type->base) {
+                switch (node->data.variable.var_type->base->kind) {
+                    case TYPE_CHAR: elem_size = 1; break;
+                    case TYPE_SHORT: elem_size = 2; break;
+                    case TYPE_INT: elem_size = 4; break;
+                    case TYPE_LONG:
+                    case TYPE_LONGLONG:
+                    case TYPE_POINTER: elem_size = 8; break;
+                    default: elem_size = 4; break;
+                }
+            }
+            
             // For array initializers, emit stores for each element
             List *elements = node->data.variable.init->data.init_list.elements;
             if (elements) {
@@ -1043,9 +1272,9 @@ static void lower_variable_decl(ASTNode *node) {
                         // Evaluate the element value
                         IRValue *elem_val = lower_expression(elem);
                         
-                        // Calculate address: base + i * 4 (assuming int elements)
+                        // Calculate address: base + i * elem_size
                         IRValue *index_val = ir_value_create(IR_VALUE_INT);
-                        index_val->data.int_val = i * 4;
+                        index_val->data.int_val = i * elem_size;
                         index_val->is_constant = true;
 
                         index_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
@@ -1071,12 +1300,20 @@ static void lower_variable_decl(ASTNode *node) {
                         add_offset_instr->num_args = 2;
                         add_instr(add_offset_instr);
                         
-                        // Store the element
-                        IRInstruction *store_instr = ir_instr_create(IR_STORE);
-                        store_instr->args[0] = add_offset_instr->result;  // address
-                        store_instr->args[1] = elem_val;  // value
-                        store_instr->num_args = 2;
-                        add_instr(store_instr);
+                        // Save address to x22
+                        IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8);
+                        add_instr(save_addr);
+                        
+                        // Reload the element value
+                        IRInstruction *reload_elem = ir_instr_create(IR_LOAD_STACK);
+                        reload_elem->result = elem_val;
+                        add_instr(reload_elem);
+                        
+                        // Store through x22
+                        IRInstruction *store_indirect = ir_instr_create(IR_STORE_INDIRECT);
+                        store_indirect->result = ir_value_create(IR_VALUE_INT);
+                        store_indirect->result->elem_size = elem_size;  // Pass element size for correct store width
+                        add_instr(store_indirect);
                     }
                 }
             }
@@ -1183,15 +1420,12 @@ static IRValue *lower_call_expr(ASTNode *node) {
         // Check if ANY remaining argument (not just the next one) will modify x8.
         // We need to save this temp if there are more arguments remaining.
         // NOTE: Even string literals modify x8 (they emit adrp/add instructions)
-        bool remaining_args_preserve_x8 = true;
-        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1) {
-            // There are more arguments after this one, they will clobber x8
-            remaining_args_preserve_x8 = false;
-        }
+        // ALSO: We need to save temps so the codegen can reload them in reverse order
+        bool needs_save = arg && arg->is_temp && (i > 0 || list_size(node->data.call.args) > 1);
         
-        // If this argument is a temp and remaining arguments might modify x8,
-        // save it to stack before continuing
-        if (arg && arg->is_temp && i < list_size(node->data.call.args) - 1 && !remaining_args_preserve_x8) {
+        // If this argument is a temp, save it to stack so codegen can reload later
+        // Codegen processes variadic args in reverse order, so it needs to reload from stack
+        if (needs_save) {
             // Allocate a stack slot for this temp
             temp_slot = locals_size;
             locals_size += 8;
@@ -1199,8 +1433,6 @@ static IRValue *lower_call_expr(ASTNode *node) {
             // Store the temp to the stack slot
             IRValue *store_result = ir_value_create(IR_VALUE_INT);
             store_result->offset = temp_slot;
-            IRValue *store_result2 = ir_value_create(IR_VALUE_INT);
-            store_result2->offset = temp_slot;
             IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
             store_i->result = store_result;
             add_instr(store_i);
@@ -1422,14 +1654,14 @@ static IRValue *lower_expression(ASTNode *node) {
                 // Check if base is a local variable (array)
                 LocalVar *lv = locals_lookup(base_name);
                 if (lv) {
-                    // Local array - compute address as sp + offset + index*4
+                    // Local array - compute address as sp + offset + index*elem_size
                     
                     // Step 1: Evaluate index
                     IRValue *index_val = lower_expression(index_node);
                     
-                    // Step 2: Scale index by 4 (sizeof int)
+                    // Step 2: Scale index by element size
                     IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                    scale_val->data.int_val = 4;
+                    scale_val->data.int_val = elem_size;
                     scale_val->is_constant = true;
 
                     scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
@@ -1437,7 +1669,7 @@ static IRValue *lower_expression(ASTNode *node) {
                     scale_instr->result = scale_val;
                     add_instr(scale_instr);
                     
-                    // Step 3: index * 4 (result in x8)
+                    // Step 3: index * elem_size (result in x8)
                     IRInstruction *mul_instr = ir_instr_create(IR_MUL);
                     mul_instr->result = ir_value_create(IR_VALUE_INT);
                     mul_instr->result->is_constant = false;
@@ -1447,7 +1679,7 @@ static IRValue *lower_expression(ASTNode *node) {
                     mul_instr->num_args = 2;
                     add_instr(mul_instr);
                     
-                    // Step 4: Save offset (in x8) to x21
+                    // Step 4: Save offset (in x8) to temp slot
                     IRInstruction *save_offset = ir_instr_create(IR_SAVE_X8);
                     add_instr(save_offset);
                     
@@ -1460,71 +1692,30 @@ static IRValue *lower_expression(ASTNode *node) {
                     addr_instr->result = addr_val;
                     add_instr(addr_instr);
                     
-                    // Step 6: Add address + offset (x8 = x8 + x21)
+                    // Step 6: Save base address to x20
+                    IRInstruction *save_base = ir_instr_create(IR_SAVE_X8_TO_X20);
+                    add_instr(save_base);
+                    
+                    // Step 7: Restore offset from temp slot
+                    IRInstruction *restore_offset = ir_instr_create(IR_RESTORE_X8_RESULT);
+                    add_instr(restore_offset);
+                    
+                    // Step 8: Add address + offset (x8 = x20 + x8)
                     IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
                     add_i->result = ir_value_create(IR_VALUE_INT);
                     add_instr(add_i);
                     
-                    // Step 7: Load from address in x8
+                    // Step 9: Load from address (x8 has the address)
                     IRInstruction *load_i = ir_instr_create(IR_LOAD);
                     load_i->result = ir_value_create(IR_VALUE_INT);
                     load_i->result->is_temp = true;
-                    load_i->num_args = 0;  // Signal to load from [x8]
+                    load_i->result->is_pointer = result_is_pointer;
+                    load_i->result->is_byte = (elem_size == 1);  // Mark as byte for char loads
+                    load_i->num_args = 0;
                     add_instr(load_i);
                     
                     return load_i->result;
                 }
-            }
-            
-            // General case: base is any expression (e.g., result of another subscript)
-            // Handle expressions like (argv[1])[0] where base is a subscript result
-            if (base_node) {
-                // Step 1: Evaluate the base expression (gives us a pointer in x8)
-                IRValue *base_val = lower_expression(base_node);
-                (void)base_val;  // Result is in x8
-                
-                // Step 2: Save the pointer to x20 (callee-saved)
-                IRInstruction *save_ptr = ir_instr_create(IR_SAVE_X8_TO_X20);
-                add_instr(save_ptr);
-                
-                // Step 3: Evaluate index
-                IRValue *index_val = lower_expression(index_node);
-                
-                // Step 4: Scale index by element size
-                IRValue *scale_val = ir_value_create(IR_VALUE_INT);
-                scale_val->data.int_val = elem_size;
-                scale_val->is_constant = true;
-
-                scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
-                IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
-                scale_instr->result = scale_val;
-                add_instr(scale_instr);
-                
-                // Step 5: Multiply index by element size
-                IRInstruction *mul_instr = ir_instr_create(IR_MUL);
-                mul_instr->result = ir_value_create(IR_VALUE_INT);
-                mul_instr->result->is_constant = false;
-                mul_instr->result->is_temp = true;
-                mul_instr->args[0] = index_val;
-                mul_instr->args[1] = scale_val;
-                mul_instr->num_args = 2;
-                add_instr(mul_instr);
-                
-                // Step 6: Add base pointer + scaled index (x8 = x20 + x8)
-                IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
-                add_i->result = ir_value_create(IR_VALUE_INT);
-                add_instr(add_i);
-                
-                // Step 7: Load from address (x8 has the address)
-                IRInstruction *load_i = ir_instr_create(IR_LOAD);
-                load_i->result = ir_value_create(IR_VALUE_INT);
-                load_i->result->is_temp = true;
-                load_i->result->is_pointer = result_is_pointer;
-                load_i->result->is_byte = (elem_size == 1);  // Mark as byte for char loads
-                load_i->num_args = 0;
-                add_instr(load_i);
-                
-                return load_i->result;
             }
             
             // Fallback - should not reach here
@@ -1693,8 +1884,17 @@ static IRValue *lower_string_literal(ASTNode *node) {
     const char *str = node->data.string_literal.value;
     list_push(current_module->strings, strdup(str));
     
+    int string_index = list_size(current_module->strings) - 1;
+    
+    // Emit IR_CONST_STRING to load the string address into x8
     IRValue *val = ir_value_create(IR_VALUE_STRING);
-    val->string_index = list_size(current_module->strings) - 1;
+    val->string_index = string_index;
+    val->is_temp = true;  // Mark as temp since it will be in x8
+    
+    IRInstruction *instr = ir_instr_create(IR_CONST_STRING);
+    instr->result = val;
+    add_instr(instr);
+    
     return val;
 }
 
@@ -1953,6 +2153,10 @@ static void lower_statement(ASTNode *node) {
 static void lower_function(ASTNode *node) {
     IRFunction *func = ir_function_create(node->data.function.name);
     func->is_static = node->is_static;  // Preserve static storage class
+    // Check if function is variadic (has ... in parameter list)
+    if (node->data.function.func_type && node->data.function.func_type->is_variadic) {
+        func->is_variadic = true;
+    }
     list_push(current_module->functions, func);
 
     IRBasicBlock *entry = ir_block_create("entry");

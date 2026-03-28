@@ -119,6 +119,30 @@ static void declare_builtins(void) {
     symtab_add(current_symtab, "stderr", SYMBOL_VARIABLE, void_ptr_type);
     symtab_add(current_symtab, "stdout", SYMBOL_VARIABLE, void_ptr_type);
     symtab_add(current_symtab, "stdin", SYMBOL_VARIABLE, void_ptr_type);
+    
+    // malloc - returns void*
+    Type *malloc_func_type = type_create(TYPE_FUNCTION);
+    malloc_func_type->return_type = void_ptr_type;
+    malloc_func_type->is_variadic = false;
+    symtab_add(current_symtab, "malloc", SYMBOL_FUNCTION, malloc_func_type);
+    
+    // free - takes void*, returns void
+    Type *free_func_type = type_create(TYPE_FUNCTION);
+    free_func_type->return_type = type_create(TYPE_VOID);
+    free_func_type->is_variadic = false;
+    symtab_add(current_symtab, "free", SYMBOL_FUNCTION, free_func_type);
+    
+    // memcpy - takes void*, void*, size_t, returns void*
+    Type *memcpy_func_type = type_create(TYPE_FUNCTION);
+    memcpy_func_type->return_type = void_ptr_type;
+    memcpy_func_type->is_variadic = false;
+    symtab_add(current_symtab, "memcpy", SYMBOL_FUNCTION, memcpy_func_type);
+    
+    // strlen - takes const char*, returns size_t
+    Type *strlen_func_type = type_create(TYPE_FUNCTION);
+    strlen_func_type->return_type = type_create(TYPE_LONG);  // size_t is usually unsigned long
+    strlen_func_type->is_variadic = false;
+    symtab_add(current_symtab, "strlen", SYMBOL_FUNCTION, strlen_func_type);
 }
 
 // Analyze a declaration
@@ -333,11 +357,40 @@ static Type *analyze_expression_with_type(ASTNode *node) {
             return NULL;
         }
         
-        case AST_UNARY_EXPR:
+        case AST_UNARY_EXPR: {
+            int op = node->data.unary.op;
+            Type *operand_type = NULL;
             if (node->data.unary.operand) {
-                return analyze_expression_with_type(node->data.unary.operand);
+                operand_type = analyze_expression_with_type(node->data.unary.operand);
             }
-            return NULL;
+            
+            // Set the result type based on the operator
+            switch (op) {
+                case 4: {  // * (dereference)
+                    // Result type is the base type of the pointer
+                    if (operand_type && operand_type->kind == TYPE_POINTER) {
+                        node->type_info = operand_type->base;
+                        return operand_type->base;
+                    }
+                    break;
+                }
+                case 6:   // ++ (postfix increment)
+                case 7:   // -- (postfix decrement)
+                case 8:   // ++ (prefix increment)
+                case 9:   // -- (prefix decrement)
+                    // Result type is the same as operand type
+                    node->type_info = operand_type;
+                    return operand_type;
+                case 2:   // ! (logical NOT)
+                case 3:   // ~ (bitwise NOT)
+                    // Result type is int
+                    node->type_info = type_create(TYPE_INT);
+                    return node->type_info;
+                default:
+                    break;
+            }
+            return operand_type;
+        }
             
         case AST_ASSIGNMENT_EXPR: {
             Type *left = analyze_expression_with_type(node->data.assignment.left);

@@ -94,12 +94,8 @@ test: all
 	$(MAKE) test-comprehensive 2>&1 | tail -6; \
 	exit $$result
 
-# Build test directory
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
-
 # Run unit tests
-test-unit: all $(BUILD_DIR)
+test-unit: all
 	@echo "Running unit tests..."
 	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_lexer tests/unit/test_lexer.c common/*.c lexer/*.c && cd ../build && ./test_lexer
 	@cd $(SRC_DIR) && $(CC) $(CFLAGS) -I . -o ../build/test_parser tests/unit/test_parser.c common/*.c lexer/*.c parser/*.c && cd ../build && ./test_parser
@@ -108,19 +104,19 @@ test-unit: all $(BUILD_DIR)
 	@echo "Unit tests complete"
 
 # Run integration tests
-test-integration: $(COMPILER) $(BUILD_DIR)
+test-integration: $(COMPILER)
 	@echo "Running integration tests..."
 	$(CC) $(CFLAGS) -o $(TEST_CGEN) $(SRC_DIR)/tests/test_codegen.c -I $(SRC_DIR) -lm
 	./$(TEST_CGEN)
 
 # Run regression tests
-test-regression: $(COMPILER) $(BUILD_DIR)
+test-regression: $(COMPILER)
 	@echo "Running regression tests..."
 	$(CC) $(CFLAGS) -o $(TEST_FULL) $(SRC_DIR)/tests/test_full.c -I $(SRC_DIR) -lm
 	./$(TEST_FULL)
 
 # Run comprehensive tests
-test-comprehensive: $(COMPILER) $(BUILD_DIR)
+test-comprehensive: $(COMPILER)
 	@echo "Running comprehensive tests..."
 	$(CC) $(CFLAGS) -o $(TEST_COMP) $(SRC_DIR)/tests/test_comprehensive.c -I $(SRC_DIR) -lm
 	./$(TEST_COMP)
@@ -144,7 +140,7 @@ info:
 	@echo "Compiler binary: $(COMPILER)"
 
 # Run puzzle tests
-test-puzzles: $(COMPILER) $(BUILD_DIR)
+test-puzzles: $(COMPILER)
 	@echo "========================================="
 	@echo "Running Puzzle Tests"
 	@echo "========================================="
@@ -195,7 +191,7 @@ test-puzzles: $(COMPILER) $(BUILD_DIR)
 # =============================================================================
 
 # Run WASM test suite
-test-wasm: $(COMPILER) $(BUILD_DIR)
+test-wasm: $(COMPILER)
 	@echo "========================================="
 	@echo "Running WASM Test Suite"
 	@echo "========================================="
