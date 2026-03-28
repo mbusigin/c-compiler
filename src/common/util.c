@@ -9,6 +9,14 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+// Define SEEK constants if not available
+#ifndef SEEK_SET
+#define SEEK_SET 0
+#endif
+#ifndef SEEK_END
+#define SEEK_END 2
+#endif
+
 void *xmalloc(size_t size) {
     if (size == 0) {
         return NULL;
