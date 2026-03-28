@@ -659,17 +659,30 @@ static Type *parse_type(Parser *p) {
                 free(name);
                 Type *t = type_create(TYPE_BOOL);
                 return t;
-            } else if (strcmp(name, "FILE") == 0 || strcmp(name, "va_list") == 0) {
-                // FILE and va_list are pointer types
+            } else if (strcmp(name, "FILE") == 0) {
+                // FILE is a pointer type
                 advance_p(p);
                 free(name);
                 Type *t = type_create(TYPE_POINTER);
                 t->base = type_create(TYPE_VOID);
                 while (check_p(p, TOKEN_STAR)) {
                     advance_p(p);
-                    Type *ptr = type_pointer(t);
+                    Type *ptr = type_create(TYPE_POINTER);
+                    ptr->base = t;
                     t = ptr;
                 }
+                return t;
+            } else if (strcmp(name, "va_list") == 0) {
+                // va_list on ARM64 is a struct with 5 fields (40 bytes total):
+                // void *__stack; void *__gr_top; void *__vr_top; long __gr_off; long __vr_off;
+                advance_p(p);
+                free(name);
+                Type *t = type_create(TYPE_STRUCT);
+                t->struct_name = strdup("__builtin_va_list_struct");
+                t->size = 40;  // 5 fields * 8 bytes each
+                t->align = 8;
+                t->num_members = 0;
+                t->members = NULL;
                 return t;
             } else if (strcmp(name, "Type") == 0 || strcmp(name, "ASTNode") == 0 ||
                        strcmp(name, "TokenType") == 0 || strcmp(name, "Token") == 0 ||
@@ -1862,11 +1875,35 @@ static ASTNode *parse_postfix_expr_with_expr(Parser *p, ASTNode *expr) {
         }
         else if (check_p(p, TOKEN_LPAREN)) {
             advance_p(p);
+            // Check if callee is a builtin va function
+            bool is_va_start = false;
+            if (expr && expr->type == AST_IDENTIFIER_EXPR) {
+                const char *name = expr->data.identifier.name;
+                if (strcmp(name, "va_start") == 0 || strcmp(name, "__builtin_va_start") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_start");
+                    is_va_start = true;
+                } else if (strcmp(name, "va_end") == 0 || strcmp(name, "__builtin_va_end") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_end");
+                } else if (strcmp(name, "va_copy") == 0 || strcmp(name, "__builtin_va_copy") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_copy");
+                }
+            }
             ASTNode *node = ast_create(AST_CALL_EXPR);
             node->data.call.callee = expr;
             node->data.call.args = list_create();
+            int arg_idx = 0;
             while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
-                list_push(node->data.call.args, parse_assignment_expr(p));
+                ASTNode *arg = parse_assignment_expr(p);
+                // For va_start, the first argument must be the address-of the va_list
+                if (is_va_start && arg_idx == 0 && arg->type == AST_IDENTIFIER_EXPR) {
+                    // Wrap in address-of operator (unary op 5)
+                    ASTNode *addr_of = ast_create(AST_UNARY_EXPR);
+                    addr_of->data.unary.op = 5;  // Address-of operator
+                    addr_of->data.unary.operand = arg;
+                    arg = addr_of;
+                }
+                list_push(node->data.call.args, arg);
+                arg_idx++;
                 if (check_p(p, TOKEN_COMMA)) advance_p(p);
                 else break;
             }
@@ -1929,11 +1966,35 @@ static ASTNode *parse_postfix_expr(Parser *p) {
         }
         else if (check_p(p, TOKEN_LPAREN)) {
             advance_p(p);
+            // Check if callee is a builtin va function
+            bool is_va_start = false;
+            if (expr && expr->type == AST_IDENTIFIER_EXPR) {
+                const char *name = expr->data.identifier.name;
+                if (strcmp(name, "va_start") == 0 || strcmp(name, "__builtin_va_start") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_start");
+                    is_va_start = true;
+                } else if (strcmp(name, "va_end") == 0 || strcmp(name, "__builtin_va_end") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_end");
+                } else if (strcmp(name, "va_copy") == 0 || strcmp(name, "__builtin_va_copy") == 0) {
+                    expr->data.identifier.name = strdup("___builtin_va_copy");
+                }
+            }
             ASTNode *node = ast_create(AST_CALL_EXPR);
             node->data.call.callee = expr;
             node->data.call.args = list_create();
+            int arg_idx = 0;
             while (!check_p(p, TOKEN_RPAREN) && !check_p(p, TOKEN_EOF)) {
-                list_push(node->data.call.args, parse_assignment_expr(p));
+                ASTNode *arg = parse_assignment_expr(p);
+                // For va_start, the first argument must be the address-of the va_list
+                if (is_va_start && arg_idx == 0 && arg->type == AST_IDENTIFIER_EXPR) {
+                    // Wrap in address-of operator (unary op 5)
+                    ASTNode *addr_of = ast_create(AST_UNARY_EXPR);
+                    addr_of->data.unary.op = 5;  // Address-of operator
+                    addr_of->data.unary.operand = arg;
+                    arg = addr_of;
+                }
+                list_push(node->data.call.args, arg);
+                arg_idx++;
                 if (check_p(p, TOKEN_COMMA)) advance_p(p);
                 else break;
             }

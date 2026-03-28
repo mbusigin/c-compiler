@@ -132,7 +132,7 @@ struct ASTNode {
         struct { ASTNode *left; ASTNode *right; } comma;
         struct { ASTNode *callee; List *args; } call;
         struct { ASTNode *array; ASTNode *index; } subscript;
-        struct { ASTNode *expr; char *member; bool is_arrow; } member;
+        struct { ASTNode *expr; char *member; bool is_arrow; size_t member_offset; } member;
         struct { char *name; } identifier;
         struct { long long value; } int_literal;
         struct { double value; } float_literal;

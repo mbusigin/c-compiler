@@ -46,53 +46,44 @@ static void prologue(int locals_size) {
     //   sp -> [lower addresses]
     // 
     // x29 (frame pointer) points to the base of locals for stable addressing
-    // Locals are at negative offsets from x29, or we can use positive offsets
-    // if we set x29 to point below the locals.
-    // We save x20, x21 (callee-saved) for use in pointer preservation
-    int callee_saved = 32;  // fp, lr, x20, x21 (4 * 8 = 32 bytes)
+    // Locals are at positive offsets from x29.
+    // Stack layout (low to high addresses):
+    //   sp -> [saved x20, x21]
+    //         [saved x19, x22]  
+    //         [saved x29, x30]
+    //   x29 -> [locals...]
+    // 
+    // We save x19, x20, x21, x22 (callee-saved) for use in various operations
+    int callee_saved = 48;  // x29, x30, x19, x20, x21, x22 (6 * 8 = 48 bytes)
     int total = locals_size + callee_saved;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
     if (total > 0)
         emit_instr("sub\tsp, sp, #%d", total);
     
-    // Save fp/lr/x20/x21 at the top of the frame (highest addresses)
-    // Saved at [sp + locals_size]
-    // Check if offset is within valid range for stp [-512, 504]
-    // Note: We need to check both offsets: locals_size and locals_size + 16
-    if (locals_size >= 0 && locals_size + 16 <= 504 && (locals_size % 8) == 0) {
-        emit_instr("stp\tx29, x30, [sp, #%d]", locals_size);  // Save fp/lr above locals
-        emit_instr("stp\tx20, x21, [sp, #%d]", locals_size + 16);  // Save x20/x21
-    } else {
-        // For large frames, compute the address manually
-        emit_instr("add\tx8, sp, #%d", locals_size);
-        emit_instr("stp\tx29, x30, [x8]");
-        emit_instr("stp\tx20, x21, [x8, #16]");
-    }
+    // Save callee-saved registers at the BOTTOM of the frame (lowest addresses)
+    // Then set x29 to point ABOVE them, so locals don't overlap
+    emit_instr("stp\tx20, x21, [sp]");           // Save x20/x21 at [sp]
+    emit_instr("stp\tx19, x22, [sp, #16]");      // Save x19/x22 at [sp + 16]
+    emit_instr("stp\tx29, x30, [sp, #32]");      // Save fp/lr at [sp + 32]
+    // Set frame pointer to point to start of locals area (above saved registers)
+    emit_instr("add\tx29, sp, #48");             // x29 = sp + 48 (past saved regs)
     
-    // Set frame pointer to base of locals area
-    // Locals are stored at [sp, #0] through [sp, #locals_size-8]
-    // Set x29 = sp so we can address locals as [x29, #offset]
-    emit_instr("mov\tx29, sp");
+    // Frame pointer (x29) was set above to point to start of locals area
+    // Locals can be addressed as [x29, #offset] where offset is 0 to locals_size-8
 }
 
 static void epilogue(int locals_size) {
-    int callee_saved = 32;
+    int callee_saved = 48;
     int total = locals_size + callee_saved;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
-    // x29 points to sp (base of locals area)
-    // fp/lr/x20/x21 were saved at [sp, #locals_size] = [x29, #locals_size]
+    // x29 points to start of locals area (sp + 48)
+    // Saved registers are at [x29 - 48] to [x29 - 8]
+    // Which is [sp] to [sp + 40]
     
-    // Check if offset is within valid range for ldp [-512, 504]
-    // Note: We need to check both offsets: locals_size and locals_size + 16
-    if (locals_size >= 0 && locals_size + 16 <= 504 && (locals_size % 8) == 0) {
-        emit_instr("ldp\tx20, x21, [x29, #%d]", locals_size + 16);  // Restore x20/x21
-        emit_instr("ldp\tx29, x30, [x29, #%d]", locals_size);  // Restore fp/lr
-    } else {
-        // For large frames, compute the address manually
-        emit_instr("add\tx8, x29, #%d", locals_size);
-        emit_instr("ldp\tx29, x30, [x8]");
-        emit_instr("ldp\tx20, x21, [x8, #16]");
-    }
+    // Restore callee-saved registers
+    emit_instr("ldp\tx20, x21, [sp]");           // Restore x20/x21 from [sp]
+    emit_instr("ldp\tx19, x22, [sp, #16]");      // Restore x19/x22 from [sp + 16]
+    emit_instr("ldp\tx29, x30, [sp, #32]");      // Restore fp/lr from [sp + 32]
     if (total > 0)
         emit_instr("add\tsp, sp, #%d", total);
     emit_instr("ret");
@@ -169,12 +160,10 @@ static void emit_load_value(int reg, IRValue *val) {
             } else if (val->param_reg == -2 || val->param_reg == -3) {
                 // It's a local variable on the stack - load from [x29, #offset] (frame pointer relative)
                 // val->offset contains the stack offset
-                // Use 64-bit load for pointers, 32-bit for integers
-                if (val->is_pointer) {
-                    emit_instr("ldr\tx%d, [x29, #%d]", reg, val->offset);
-                } else {
-                    emit_instr("ldr\tw%d, [x29, #%d]", reg, val->offset);
-                }
+                // IMPORTANT: Default to 64-bit load for all stack values on ARM64
+                // Addresses (from LEA) must be loaded as 64-bit, and it's safer to use 64-bit
+                // for all local variables to avoid truncation issues.
+                emit_instr("ldr\tx%d, [x29, #%d]", reg, val->offset);
             } else if (val->param_reg == -4) {
                 // Special: indicates this is a LOAD_STACK result that needs the offset from result field
                 // This case should not normally be reached
@@ -195,44 +184,53 @@ static void emit_load_value(int reg, IRValue *val) {
 }
 
 // Load operands for a binary operation
+// Optimization: Try to use operands directly from their registers without extra moves
 // Strategy:
 // - Previous value (first operand or temp) is saved in x10 by IR_LOAD_STACK/IR_CONST_INT
 // - Constants are loaded to x8
-// - For binary ops: x0 = left, x1 = right
+// - For binary ops: try to use registers directly, minimize moves
 static void emit_load_binary_args(IRValue *left, IRValue *right) {
     bool left_is_temp = left && left->kind == IR_VALUE_INT && left->is_temp;
     bool right_is_temp = right && right->kind == IR_VALUE_INT && right->is_temp;
     bool right_is_const = right && right->kind == IR_VALUE_INT && right->is_constant;
     bool left_is_const = left && left->kind == IR_VALUE_INT && left->is_constant;
     
+    // Optimization: For operations that write to x8, we can use operands directly
+    // instead of moving them to x0/x1 first
+    // This is handled by the caller - we just ensure operands are in predictable registers
+    
     if (left_is_temp && right_is_temp) {
         // Both temps: x10 = left (saved by previous instruction), x8 = right
-        emit_instr("mov\tx0, x10");   // x0 = left
-        emit_instr("mov\tx1, x8");    // x1 = right
+        // Operation will be: op x8, x10, x8 (or similar)
+        // Just ensure both values are in their expected registers - no moves needed
     } else if (left_is_temp && right_is_const) {
-        // Left in x10 (saved by previous instruction), right is constant in x8
-        emit_instr("mov\tx0, x10");   // x0 = left
-        emit_instr("mov\tx1, x8");    // x1 = constant
+        // Left in x10, right is constant in x8
+        // Operation will be: op x8, x10, x8
+        // No moves needed
     } else if (left_is_temp && !right_is_temp && !right_is_const) {
         // Left in x10, right is something else (e.g., parameter or stack load)
-        emit_instr("mov\tx0, x10");   // x0 = left
-        emit_load_value(1, right);    // x1 = right
+        // Need to load right - x10 already has left
+        emit_load_value(0, right);    // Load right into x0 temporarily
+        emit_instr("mov\tx10, x0");   // Move to x10 so operation can use it
     } else if (right_is_temp && !left_is_temp) {
         // Right in x8, left is something else
-        emit_instr("mov\tx1, x8");    // x1 = right
-        emit_load_value(0, left);     // x0 = left
+        // Need to load left into x10
+        emit_load_value(10, left);     // Load left directly into x10
+        // x8 already has right
     } else if (right_is_const && !left_is_temp) {
         // Right is constant (in x8), left is something else
-        emit_instr("mov\tx1, x8");    // x1 = constant
-        emit_load_value(0, left);     // x0 = left
+        // Load left into x10, keep right in x8
+        emit_load_value(10, left);
     } else if (left_is_const && !right_is_temp) {
         // Left is constant (in x8), right is something else
-        emit_instr("mov\tx0, x8");    // x0 = constant
-        emit_load_value(1, right);    // x1 = right
+        // Need to swap: move left to x10, load right to x8
+        emit_instr("mov\tx10, x8");    // Save left to x10
+        emit_load_value(8, right);     // Load right to x8
+        // Now x10 = left, x8 = right (swapped)
     } else {
-        // Default: load left into x0, right into x1
-        emit_load_value(0, left);
-        emit_load_value(1, right);
+        // Default: load left into x10, right into x8
+        emit_load_value(10, left);
+        emit_load_value(8, right);
     }
     
     // Reset temp tracking after binary op args are prepared
@@ -271,7 +269,8 @@ static void gen_instr(IRInstruction *instr) {
             }
             // Jump to label if condition is FALSE (zero)
             // This is the correct behavior for if/while statements
-            emit_instr("cbz\tw0, %s", label);
+            // Use x0 for 64-bit pointer comparison (was w0, which is wrong)
+            emit_instr("cbz\tx0, %s", label);
             break;
         }
             
@@ -475,143 +474,145 @@ static void gen_instr(IRInstruction *instr) {
         case IR_ADD: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             // Use 64-bit add for both integers and addresses (works for both)
-            emit_instr("add\tx0, x0, x1");
-            emit_instr("mov\tx8, x0");
+            // Operands are in x10 (left) and x8 (right), result goes to x8
+            emit_instr("add\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_SUB: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("sub\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            // Operands are in x10 (left) and x8 (right), result goes to x8
+            emit_instr("sub\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_MUL: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
             // Use 64-bit multiplication for pointer arithmetic
-            emit_instr("mul\tx0, x0, x1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("mul\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_DIV: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("sdiv\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("sdiv\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_MOD: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("sdiv\tw2, w0, w1");
-            emit_instr("msub\tw0, w2, w1, w0");
-            emit_instr("mov\tx8, x0");
+            emit_instr("sdiv\tx2, x10, x8");
+            emit_instr("msub\tx8, x2, x8, x10");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_AND: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("and\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("and\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_OR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("orr\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("orr\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_XOR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("eor\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("eor\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_SHL: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("lslv\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("lslv\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_SHR: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("lsrv\tw0, w0, w1");
-            emit_instr("mov\tx8, x0");
+            emit_instr("lsrv\tx8, x10, x8");
+            x8_temp_type = 1;
             break;
         }
             
         case IR_NOT:
             emit_load_value(0, instr->args[0]);
             emit_instr("cmp\tx0, xzr");
-            emit_instr("cset\tw0, eq");  // 1 if x0==0 (was false), 0 if x0!=0 (was true)
-            emit_instr("mov\tx8, x0");
+            emit_instr("cset\tx8, eq");  // 1 if x0==0 (was false), 0 if x0!=0 (was true)
+            x8_temp_type = 1;
             break;
             
         case IR_NEG: {
             // Load operand into x0, then negate
             emit_load_value(0, instr->args[0]);
-            emit_instr("neg\tw0, w0");
-            emit_instr("mov\tx8, x0");
+            emit_instr("neg\tx8, x0");
+            x8_temp_type = 1;
             break;
         }
             
         case IR_CMP: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
+            emit_instr("cmp\tx10, x8");
             break;
         }
 
         // Comparison ops: load args, compare, set result to 1 or 0, save to x8
         case IR_CMP_LT: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, lt");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, lt");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_CMP_GT: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, gt");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, gt");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_CMP_LE: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, le");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, le");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_CMP_GE: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, ge");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, ge");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_CMP_EQ: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, eq");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, eq");
+            x8_temp_type = 1;
             break;
         }
 
         case IR_CMP_NE: {
             emit_load_binary_args(instr->args[0], instr->args[1]);
-            emit_instr("cmp\tw0, w1");
-            emit_instr("cset\tw0, ne");
-            emit_instr("mov\tx8, x0");
+            emit_instr("cmp\tx10, x8");
+            emit_instr("cset\tx8, ne");
+            x8_temp_type = 1;
             break;
         }
 
@@ -666,11 +667,13 @@ static void gen_instr(IRInstruction *instr) {
                 }
                 
                 // Load from address in x8
-                // Use 8-byte load for pointers, 4-byte for integers
-                if (instr->result && instr->result->is_pointer) {
-                    emit_instr("ldr\tx8, [x8]");  // 8-byte load for pointers
+                // Use 8-byte load for pointers and 64-bit values, ldrb for bytes (char)
+                if (instr->result && (instr->result->is_pointer || instr->result->is_64bit)) {
+                    emit_instr("ldr\tx8, [x8]");  // 8-byte load for pointers/64-bit
+                } else if (instr->result && instr->result->is_byte) {
+                    emit_instr("ldrb\tw8, [x8]");  // 1-byte load for char
                 } else {
-                    emit_instr("ldr\tw8, [x8]");  // 4-byte load for integers
+                    emit_instr("ldr\tw8, [x8]");  // 4-byte load for 32-bit integers
                 }
             } else {
                 // Legacy behavior: x0 contains the address
@@ -679,8 +682,11 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx10, x8");
                 }
                 
-                if (instr->result && instr->result->is_pointer) {
+                if (instr->result && (instr->result->is_pointer || instr->result->is_64bit)) {
                     emit_instr("ldr\tx0, [x0]");
+                    emit_instr("mov\tx8, x0");
+                } else if (instr->result && instr->result->is_byte) {
+                    emit_instr("ldrb\tw0, [x0]");
                     emit_instr("mov\tx8, x0");
                 } else {
                     emit_instr("ldr\tw0, [x0]");
@@ -697,44 +703,29 @@ static void gen_instr(IRInstruction *instr) {
             break;
             
         case IR_LOAD_STACK: {
-            // Load from [sp, #offset]
-            // Strategy: if we have a pending value in x8, save it to x10 first.
-            // Also save x9 to x21 (it may have the first operand or return value from previous ops).
-            // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
+            // Load from [x29, #offset]
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int old_x9_type = x9_temp_type;
                 int offset = (int)instr->result->offset;
+                
                 if (old_x9_type == 1 || old_x9_type == 2) {
-                    emit_instr("mov\tx21, x9");  // Save x9 before it gets clobbered
+                    emit_instr("mov\tx21, x9");
                 }
-                emit_instr("mov\tx10, x8");  // Always save x8 first (will be garbage if first load)
-                // Use 64-bit load for pointers or parameters, 32-bit for integers
-                // For large offsets (> 504), use indirect addressing
-                if (offset > 504 || offset < -512) {
-                    emit_instr("add\tx0, x29, #%d", offset);
-                    if (instr->result->is_pointer || instr->result->param_reg == -2) {
-                        emit_instr("ldr\tx0, [x0]");  // 64-bit load for pointers
-                    } else {
-                        emit_instr("ldr\tw0, [x0]");  // 32-bit load for integers
-                    }
-                } else {
-                    if (instr->result->is_pointer || instr->result->param_reg == -2) {
-                        emit_instr("ldr\tx0, [x29, #%d]", offset);  // 64-bit load for pointers, use x29
-                    } else {
-                        emit_instr("ldr\tw0, [x29, #%d]", offset);  // 32-bit load for integers, use x29
-                    }
+                if (x8_temp_type == 1 || x8_temp_type == 2) {
+                    emit_instr("mov\tx10, x8");
                 }
-                emit_instr("mov\tx8, x0");  // Save loaded value to x8
-                // Also save to x22 if this is a function pointer (for call_indirect)
+                // Use 64-bit load for all stack values (safer for addresses)
+                emit_instr("ldr\tx0, [x29, #%d]", offset);
+                emit_instr("mov\tx8, x0");
                 if (instr->result->is_pointer) {
-                    emit_instr("mov\tx22, x8");  // Save function pointer to callee-saved register
+                    emit_instr("mov\tx22, x8");
                 }
                 if (old_x9_type == 1 || old_x9_type == 2) {
-                    emit_instr("mov\tx9, x21");  // Restore x9
+                    emit_instr("mov\tx9, x21");
                 }
             }
-            x8_temp_type = 1;  // x8 now has the loaded value
-            x9_temp_type = 1;  // x9 has the previous x8 value (first operand)
+            x8_temp_type = 1;
+            x9_temp_type = 1;
             break;
         }
             
@@ -794,7 +785,10 @@ static void gen_instr(IRInstruction *instr) {
                 if (old_x9_type == 1) {
                     emit_instr("mov\tx19, x9");  // Save x9 when it had value
                 }
-                emit_instr("mov\tx10, x8");  // Save previous x8 to x10 (for binary ops to access)
+                // Only save x8 to x10 if it contains a value that might be used
+                if (x8_temp_type == 1 || x8_temp_type == 2) {
+                    emit_instr("mov\tx10, x8");  // Save previous x8 to x10 (for binary ops to access)
+                }
                 // Load constant directly to x8, NOT to x0 (preserve parameters)
                 emit_immediate(8, instr->result->data.int_val);
                 emit_instr("mov\tx9, x8");   // Copy constant to x9
@@ -865,8 +859,8 @@ static void gen_instr(IRInstruction *instr) {
             break;
             
         case IR_LEA:
-            // Load effective address: x8 = sp + offset
-            // result->offset = stack offset
+            // Load effective address: x8 = x29 + offset (frame pointer relative)
+            // result->offset = stack offset relative to frame pointer
             // Save current x8 value to x10 before computing new address
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
@@ -874,10 +868,9 @@ static void gen_instr(IRInstruction *instr) {
                 if (x8_temp_type == 1 || x8_temp_type == 2) {
                     emit_instr("mov\tx10, x8");
                 }
-                emit_instr("mov\tx8, sp");
-                emit_instr("add\tx8, x8, #%d", offset);
-                // x8 now has an address, but it's not a "temp value" in the sense
-                // that it should be saved for binary operations
+                // Use frame pointer (x29) for addressing locals
+                emit_instr("add\tx8, x29, #%d", offset);
+                // Mark x8 as containing an address (for subsequent operations)
                 x8_temp_type = 0;
             }
             break;
@@ -1069,8 +1062,14 @@ static void gen_module(IRModule *module) {
             }
             emit("_%s:\n", g->name);
             if (g->initializer && g->initializer->is_constant) {
-                // Emit the initializer value
-                emit("\t.quad\t%lld\n", (long long)g->initializer->data.int_val);
+                // Check if initializer is a string literal
+                if (g->initializer->kind == IR_VALUE_STRING) {
+                    // Emit reference to string literal label
+                    emit("\t.quad\tl_.str%d\n", g->initializer->string_index);
+                } else {
+                    // Emit the integer initializer value
+                    emit("\t.quad\t%lld\n", (long long)g->initializer->data.int_val);
+                }
             } else {
                 // Zero-initialize
                 emit("\t.quad\t0\n");

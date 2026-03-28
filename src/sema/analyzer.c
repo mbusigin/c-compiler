@@ -447,8 +447,9 @@ static Type *analyze_expression_with_type(ASTNode *node) {
                 return NULL;
             }
             
-            // Store the type info on the node for IR lowering
+            // Store the type info and member offset on the node for IR lowering
             node->type_info = member->type;
+            node->data.member.member_offset = member->offset;
             
             return member->type;
         }

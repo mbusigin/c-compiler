@@ -362,7 +362,7 @@ static IRValue *lower_int_literal(ASTNode *node) {
     IRValue *result = ir_value_create(IR_VALUE_INT);
     result->data.int_val = node->data.int_literal.value;
     result->is_constant = true;
-    result->is_temp = false;
+    result->is_temp = true;  // Value is in x8 after IR_CONST_INT
     IRInstruction *instr = ir_instr_create(IR_CONST_INT);
     instr->result = result;
     add_instr(instr);
@@ -406,6 +406,8 @@ static IRValue *lower_binary_expr(ASTNode *node) {
         IRValue *zero_val = ir_value_create(IR_VALUE_INT);
         zero_val->data.int_val = 0;
         zero_val->is_constant = true;
+
+        zero_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
         IRInstruction *set_false = ir_instr_create(IR_CONST_INT);
         set_false->result = zero_val;
         add_instr(set_false);
@@ -441,6 +443,8 @@ static IRValue *lower_binary_expr(ASTNode *node) {
         IRValue *one_val = ir_value_create(IR_VALUE_INT);
         one_val->data.int_val = 1;
         one_val->is_constant = true;
+
+        one_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
         IRInstruction *set_true = ir_instr_create(IR_CONST_INT);
         set_true->result = one_val;
         add_instr(set_true);
@@ -492,6 +496,8 @@ static IRValue *lower_binary_expr(ASTNode *node) {
         IRValue *size_val = ir_value_create(IR_VALUE_INT);
         size_val->data.int_val = 8;
         size_val->is_constant = true;
+
+        size_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
         IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
         alloc_instr->result = size_val;
         add_instr(alloc_instr);
@@ -535,6 +541,35 @@ static IRValue *lower_binary_expr(ASTNode *node) {
 static IRValue *lower_unary_expr(ASTNode *node) {
     // For ++/--, we need to know if the operand is a variable to store back
     ASTNode *operand_node = node->data.unary.operand;
+    
+    // For address-of operator (case 5), we DON'T need to load the operand value
+    // We just need the variable's offset
+    if (node->data.unary.op == 5) {  // & (address-of)
+        if (operand_node && operand_node->type == AST_IDENTIFIER_EXPR) {
+            const char *name = operand_node->data.identifier.name;
+            LocalVar *lv = locals_lookup(name);
+            if (lv) {
+                // Create LEA instruction to get address (x29 + offset)
+                IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                addr_val->offset = lv->offset;
+                addr_val->is_constant = false;
+                addr_val->is_temp = true;
+                addr_val->is_address = true;
+                addr_val->is_pointer = true;
+                IRInstruction *addr_instr = ir_instr_create(IR_LEA);
+                addr_instr->result = addr_val;
+                add_instr(addr_instr);
+                return addr_instr->result;
+            }
+        }
+        // If not a local variable, return NULL (should not happen in valid code)
+        IRValue *null_val = ir_value_create(IR_VALUE_INT);
+        null_val->is_constant = true;
+        null_val->data.int_val = 0;
+        return null_val;
+    }
+    
+    // For other unary operators, load the operand value
     bool is_var = operand_node && operand_node->type == AST_IDENTIFIER_EXPR;
     LocalVar *lv = NULL;
     if (is_var) {
@@ -549,6 +584,8 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
+
+            one_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
@@ -579,6 +616,8 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
+
+            one_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
@@ -609,6 +648,8 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             IRValue *zero_val = ir_value_create(IR_VALUE_INT);
             zero_val->data.int_val = 0;
             zero_val->is_constant = true;
+
+            zero_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *zero_instr = ir_instr_create(IR_CONST_INT);
             zero_instr->result = zero_val;
             add_instr(zero_instr);
@@ -636,6 +677,8 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
+
+            one_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
@@ -677,6 +720,8 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             IRValue *one_val = ir_value_create(IR_VALUE_INT);
             one_val->data.int_val = 1;
             one_val->is_constant = true;
+
+            one_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *one_instr = ir_instr_create(IR_CONST_INT);
             one_instr->result = one_val;
             add_instr(one_instr);
@@ -808,6 +853,8 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 IRValue *scale_val = ir_value_create(IR_VALUE_INT);
                 scale_val->data.int_val = 4;
                 scale_val->is_constant = true;
+
+                scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                 IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                 scale_instr->result = scale_val;
                 add_instr(scale_instr);
@@ -867,6 +914,8 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                 IRValue *scale_val = ir_value_create(IR_VALUE_INT);
                 scale_val->data.int_val = 4;
                 scale_val->is_constant = true;
+
+                scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                 IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                 scale_instr->result = scale_val;
                 add_instr(scale_instr);
@@ -939,17 +988,44 @@ static void lower_variable_decl(ASTNode *node) {
     int is_array = (node->data.variable.var_type && 
                     node->data.variable.var_type->kind == TYPE_ARRAY);
     
-    // Allocate 8 bytes on stack
-    // Layout: [local at sp+0, sp+8...][saved fp/lr above at sp+locals_size]
-    // So first local is at offset 0, second at offset 8, etc.
+    // Get the size of the variable from its type
+    size_t var_size = 8;  // Default to 8 bytes for pointers and 64-bit types
+    if (node->data.variable.var_type) {
+        Type *t = node->data.variable.var_type;
+        if (t->size > 0) {
+            var_size = t->size;
+        } else {
+            // Calculate size based on type kind
+            switch (t->kind) {
+                case TYPE_CHAR: var_size = 1; break;
+                case TYPE_SHORT: var_size = 2; break;
+                case TYPE_INT: var_size = 4; break;
+                case TYPE_LONG:
+                case TYPE_LONGLONG:
+                case TYPE_POINTER: var_size = 8; break;
+                case TYPE_FLOAT: var_size = 4; break;
+                case TYPE_DOUBLE: var_size = 8; break;
+                case TYPE_STRUCT:
+                case TYPE_UNION:
+                    var_size = t->size > 0 ? t->size : 8;
+                    break;
+                default: var_size = 8; break;
+            }
+        }
+    }
+    
+    // Allocate var_size bytes on stack (rounded up to 8 for alignment)
+    size_t aligned_size = (var_size + 7) & ~7;  // Round up to multiple of 8
     int var_offset = locals_size;
-    locals_size += 8;
+    locals_size += aligned_size;
     locals_add(node->data.variable.name, var_offset, is_array);
     
-    // Emit: sub sp, sp, #8  (allocate space)
+    // Emit: sub sp, sp, #aligned_size  (allocate space)
     IRValue *size_val = ir_value_create(IR_VALUE_INT);
-    size_val->data.int_val = 8;
+    size_val->data.int_val = aligned_size;
     size_val->is_constant = true;
+
+    size_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
     IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
     alloc_instr->result = size_val;
     add_instr(alloc_instr);
@@ -971,6 +1047,8 @@ static void lower_variable_decl(ASTNode *node) {
                         IRValue *index_val = ir_value_create(IR_VALUE_INT);
                         index_val->data.int_val = i * 4;
                         index_val->is_constant = true;
+
+                        index_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                         IRInstruction *index_instr = ir_instr_create(IR_CONST_INT);
                         index_instr->result = index_val;
                         add_instr(index_instr);
@@ -1009,6 +1087,8 @@ static void lower_variable_decl(ASTNode *node) {
             IRValue *zero_val = ir_value_create(IR_VALUE_INT);
             zero_val->data.int_val = 0;
             zero_val->is_constant = true;
+
+            zero_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *zero_instr = ir_instr_create(IR_CONST_INT);
             zero_instr->result = zero_val;
             add_instr(zero_instr);
@@ -1132,12 +1212,21 @@ static IRValue *lower_call_expr(ASTNode *node) {
             saved_arg->param_reg = -2;  // Mark as local variable (stack-relative)
             saved_arg->offset = temp_slot;
             saved_arg->is_pointer = arg->is_pointer;  // Preserve pointer flag!
+            saved_arg->is_64bit = arg->is_64bit;       // Preserve 64-bit flag!
+            saved_arg->is_address = arg->is_address;   // Preserve address flag!
+            // DEBUG: Force 64-bit for addresses
+            if (arg->is_address || arg->is_pointer) {
+                saved_arg->is_pointer = true;
+                saved_arg->is_64bit = true;
+            }
             arg = saved_arg;
             
             // Also emit IR_ALLOCA for consistency
             IRValue *size_val = ir_value_create(IR_VALUE_INT);
             size_val->data.int_val = 8;
             size_val->is_constant = true;
+
+            size_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *alloc_instr = ir_instr_create(IR_ALLOCA);
             alloc_instr->result = size_val;
             add_instr(alloc_instr);
@@ -1225,6 +1314,8 @@ static IRValue *lower_expression(ASTNode *node) {
             IRValue *result = ir_value_create(IR_VALUE_INT);
             result->data.int_val = size;
             result->is_constant = true;
+
+            result->is_temp = true;  // Value is in x8 after IR_CONST_INT
             IRInstruction *const_instr = ir_instr_create(IR_CONST_INT);
             const_instr->result = result;
             add_instr(const_instr);
@@ -1295,6 +1386,8 @@ static IRValue *lower_expression(ASTNode *node) {
                     IRValue *scale_val = ir_value_create(IR_VALUE_INT);
                     scale_val->data.int_val = elem_size;
                     scale_val->is_constant = true;
+
+                    scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                     IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                     scale_instr->result = scale_val;
                     add_instr(scale_instr);
@@ -1338,6 +1431,8 @@ static IRValue *lower_expression(ASTNode *node) {
                     IRValue *scale_val = ir_value_create(IR_VALUE_INT);
                     scale_val->data.int_val = 4;
                     scale_val->is_constant = true;
+
+                    scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                     IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
                     scale_instr->result = scale_val;
                     add_instr(scale_instr);
@@ -1380,7 +1475,59 @@ static IRValue *lower_expression(ASTNode *node) {
                     return load_i->result;
                 }
             }
-            // Fallback
+            
+            // General case: base is any expression (e.g., result of another subscript)
+            // Handle expressions like (argv[1])[0] where base is a subscript result
+            if (base_node) {
+                // Step 1: Evaluate the base expression (gives us a pointer in x8)
+                IRValue *base_val = lower_expression(base_node);
+                (void)base_val;  // Result is in x8
+                
+                // Step 2: Save the pointer to x20 (callee-saved)
+                IRInstruction *save_ptr = ir_instr_create(IR_SAVE_X8_TO_X20);
+                add_instr(save_ptr);
+                
+                // Step 3: Evaluate index
+                IRValue *index_val = lower_expression(index_node);
+                
+                // Step 4: Scale index by element size
+                IRValue *scale_val = ir_value_create(IR_VALUE_INT);
+                scale_val->data.int_val = elem_size;
+                scale_val->is_constant = true;
+
+                scale_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
+                IRInstruction *scale_instr = ir_instr_create(IR_CONST_INT);
+                scale_instr->result = scale_val;
+                add_instr(scale_instr);
+                
+                // Step 5: Multiply index by element size
+                IRInstruction *mul_instr = ir_instr_create(IR_MUL);
+                mul_instr->result = ir_value_create(IR_VALUE_INT);
+                mul_instr->result->is_constant = false;
+                mul_instr->result->is_temp = true;
+                mul_instr->args[0] = index_val;
+                mul_instr->args[1] = scale_val;
+                mul_instr->num_args = 2;
+                add_instr(mul_instr);
+                
+                // Step 6: Add base pointer + scaled index (x8 = x20 + x8)
+                IRInstruction *add_i = ir_instr_create(IR_ADD_X21);
+                add_i->result = ir_value_create(IR_VALUE_INT);
+                add_instr(add_i);
+                
+                // Step 7: Load from address (x8 has the address)
+                IRInstruction *load_i = ir_instr_create(IR_LOAD);
+                load_i->result = ir_value_create(IR_VALUE_INT);
+                load_i->result->is_temp = true;
+                load_i->result->is_pointer = result_is_pointer;
+                load_i->result->is_byte = (elem_size == 1);  // Mark as byte for char loads
+                load_i->num_args = 0;
+                add_instr(load_i);
+                
+                return load_i->result;
+            }
+            
+            // Fallback - should not reach here
             IRValue *result = ir_value_create(IR_VALUE_INT);
             result->is_constant = false;
             result->is_temp = true;
@@ -1450,21 +1597,9 @@ static IRValue *lower_expression(ASTNode *node) {
         case AST_MEMBER_ACCESS_EXPR: {
             // struct_var.member - compute address and load
             ASTNode *base = node->data.member.expr;
-            const char *member_name = node->data.member.member;
             
-            // Get member offset from type info
-            size_t member_offset = 0;
-            Type *struct_type = NULL;
-            
-            if (base && base->type_info) {
-                struct_type = base->type_info;
-                if (struct_type) {
-                    StructMember *member = type_find_member(struct_type, member_name);
-                    if (member) {
-                        member_offset = member->offset;
-                    }
-                }
-            }
+            // Use the member offset stored during semantic analysis
+            size_t member_offset = node->data.member.member_offset;
             
             // For a local struct variable, compute its address
             if (base && base->type == AST_IDENTIFIER_EXPR) {
@@ -1484,6 +1619,12 @@ static IRValue *lower_expression(ASTNode *node) {
                     IRInstruction *load_instr = ir_instr_create(IR_LOAD);
                     load_instr->result = ir_value_create(IR_VALUE_INT);
                     load_instr->result->is_temp = true;
+                    // Check if member type is 64-bit
+                    if (node->type_info && (node->type_info->kind == TYPE_POINTER || 
+                        node->type_info->kind == TYPE_LONG || node->type_info->kind == TYPE_LONGLONG ||
+                        (node->type_info->size == 8))) {
+                        load_instr->result->is_64bit = true;
+                    }
                     load_instr->num_args = 0;
                     add_instr(load_instr);
                     
@@ -1498,22 +1639,9 @@ static IRValue *lower_expression(ASTNode *node) {
         case AST_POINTER_MEMBER_ACCESS_EXPR: {
             // ptr->member - dereference pointer and access member
             ASTNode *base = node->data.member.expr;
-            const char *member_name = node->data.member.member;
             
-            // Get member offset from type info
-            size_t member_offset = 0;
-            Type *ptr_type = base ? base->type_info : NULL;
-            Type *struct_type = NULL;
-            
-            if (ptr_type && ptr_type->kind == TYPE_POINTER) {
-                struct_type = ptr_type->base;
-                if (struct_type) {
-                    StructMember *member = type_find_member(struct_type, member_name);
-                    if (member) {
-                        member_offset = member->offset;
-                    }
-                }
-            }
+            // Use the member offset stored during semantic analysis
+            size_t member_offset = node->data.member.member_offset;
             
             // Evaluate the pointer expression
             IRValue *base_val = lower_expression(base);
@@ -1524,6 +1652,8 @@ static IRValue *lower_expression(ASTNode *node) {
                 // Create a constant for the offset
                 IRValue *offset_val = ir_value_create(IR_VALUE_INT);
                 offset_val->is_constant = true;
+
+                offset_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
                 offset_val->data.int_val = (long long)member_offset;
                 
                 // Use 64-bit add for pointer arithmetic
@@ -1541,6 +1671,12 @@ static IRValue *lower_expression(ASTNode *node) {
             IRInstruction *load_instr = ir_instr_create(IR_LOAD);
             load_instr->result = ir_value_create(IR_VALUE_INT);
             load_instr->result->is_temp = true;
+            // Check if member type is 64-bit (pointer, long, size_t, etc.)
+            if (node->type_info && (node->type_info->kind == TYPE_POINTER || 
+                node->type_info->kind == TYPE_LONG || node->type_info->kind == TYPE_LONGLONG ||
+                (node->type_info->size == 8))) {
+                load_instr->result->is_64bit = true;
+            }
             load_instr->num_args = 0;
             add_instr(load_instr);
             
@@ -1915,12 +2051,27 @@ static void lower_global_var(ASTNode *node) {
         if (init->type == AST_INTEGER_LITERAL_EXPR) {
             init_value = ir_value_create(IR_VALUE_INT);
             init_value->is_constant = true;
+
+            init_value->is_temp = true;  // Value is in x8 after IR_CONST_INT
             init_value->data.int_val = init->data.int_literal.value;
+        } else if (init->type == AST_STRING_LITERAL_EXPR) {
+            // Handle string literal initializer for global pointer
+            const char *str = init->data.string_literal.value;
+            list_push(current_module->strings, strdup(str));
+            int string_index = list_size(current_module->strings) - 1;
+            
+            init_value = ir_value_create(IR_VALUE_STRING);
+            init_value->is_constant = true;
+
+            init_value->is_temp = true;  // Value is in x8 after IR_CONST_INT
+            init_value->string_index = string_index;
         } else if (init->type == AST_IDENTIFIER_EXPR) {
             // Handle NULL initializer
             if (strcmp(init->data.identifier.name, "NULL") == 0) {
                 init_value = ir_value_create(IR_VALUE_INT);
                 init_value->is_constant = true;
+
+                init_value->is_temp = true;  // Value is in x8 after IR_CONST_INT
                 init_value->data.int_val = 0;
             }
         }

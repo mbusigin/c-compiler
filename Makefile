@@ -48,9 +48,15 @@ TEST_COMP = $(BUILD_DIR)/test_comprehensive
 all: info $(COMPILER)
 
 # Compile the compiler
-$(COMPILER): $(ALL_SRC)
-	$(CC) $(CFLAGS) -o $@ $(ALL_SRC) -lm
+$(COMPILER): $(ALL_SRC) | $(BUILD_DIR)
+	@echo "Assembling runtime.s..."
+	@as $(SRC_DIR)/runtime.s -o $(BUILD_DIR)/runtime.o
+	$(CC) $(CFLAGS) -o $@ $(ALL_SRC) $(BUILD_DIR)/runtime.o -lm
 	@echo "Build successful: $(COMPILER)"
+
+# Build directory
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
 # Clean build artifacts
 clean:
@@ -280,7 +286,9 @@ stage0: $(STAGE0)
 
 $(STAGE0): $(ALL_SRC) | $(BUILD_DIR)
 	@echo "Building stage0 compiler with $(CC)..."
-	$(CC) $(CFLAGS) -o $@ $(ALL_SRC) -lm
+	@echo "Assembling runtime.s..."
+	as $(SRC_DIR)/runtime.s -o $(BUILD_DIR)/runtime.o
+	$(CC) $(CFLAGS) -o $@ $(ALL_SRC) $(BUILD_DIR)/runtime.o -lm
 	@echo "stage0 compiler: $@"
 
 # Build stage1: compiler built by stage0
