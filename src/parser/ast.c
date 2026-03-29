@@ -354,6 +354,13 @@ Type *type_create(TypeKind kind) {
 
 void type_free(Type *t) {
     if (!t) return;
+    
+    // For named struct/union types, don't free - they're owned by the struct registry
+    // and may be shared across multiple references
+    if ((t->kind == TYPE_STRUCT || t->kind == TYPE_UNION) && t->struct_name) {
+        return;  // Don't free shared struct types
+    }
+    
     if (t->base) type_free(t->base);
     if (t->param_types) {
         for (size_t i = 0; i < t->num_params; i++)
@@ -390,6 +397,13 @@ Type *type_array(Type *element, size_t size) {
 
 Type *type_copy(Type *t) {
     if (!t) return NULL;
+    
+    // For named struct/union types, return the same pointer (not a copy)
+    // This ensures all references see updates when the struct is completed
+    if ((t->kind == TYPE_STRUCT || t->kind == TYPE_UNION) && t->struct_name) {
+        return t;
+    }
+    
     Type *copy = type_create(t->kind);
     copy->size = t->size;
     copy->align = t->align;

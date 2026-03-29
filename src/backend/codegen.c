@@ -59,8 +59,15 @@ static void prologue(int locals_size) {
     int temp_slot = 8;      // Temp slot for IR_SAVE_X8 at [x29, #-8]
     int total = locals_size + callee_saved + temp_slot;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
-    if (total > 0)
-        emit_instr("sub\tsp, sp, #%d", total);
+    if (total > 0) {
+        if (total <= 4095) {
+            emit_instr("sub\tsp, sp, #%d", total);
+        } else {
+            // Large stack frame - use emit_immediate
+            emit_immediate(9, total);
+            emit_instr("sub\tsp, sp, x9");
+        }
+    }
     
     // Save callee-saved registers at the BOTTOM of the frame (lowest addresses)
     // Then set x29 to point ABOVE them + temp slot, so locals don't overlap
@@ -68,6 +75,8 @@ static void prologue(int locals_size) {
     emit_instr("stp\tx19, x22, [sp, #16]");      // Save x19/x22 at [sp + 16]
     emit_instr("stp\tx29, x30, [sp, #32]");      // Save fp/lr at [sp + 32]
     // Temp slot is at [sp + 48], addressed as [x29, #-8]
+    // Initialize temp slot to NULL to prevent crashes if used before being set
+    emit_instr("str\txzr, [sp, #48]");           // Temp slot = NULL
     // Set frame pointer to point to start of locals area (above saved regs + temp slot)
     emit_instr("add\tx29, sp, #56");             // x29 = sp + 56 (past saved regs + temp slot)
     
@@ -90,14 +99,23 @@ static void prologue_variadic(int locals_size) {
     int va_args_size = 56;   // Space for x1-x7 (7 registers * 8 bytes)
     int total = locals_size + callee_saved + temp_slot + va_args_size;
     total = (total + 15) & ~15;  // Round up to 16-byte boundary
-    if (total > 0)
-        emit_instr("sub\tsp, sp, #%d", total);
+    if (total > 0) {
+        if (total <= 4095) {
+            emit_instr("sub\tsp, sp, #%d", total);
+        } else {
+            // Large stack frame - use emit_immediate
+            emit_immediate(9, total);
+            emit_instr("sub\tsp, sp, x9");
+        }
+    }
     
     // Save callee-saved registers
     emit_instr("stp\tx20, x21, [sp]");           // Save x20/x21 at [sp]
     emit_instr("stp\tx19, x22, [sp, #16]");      // Save x19/x22 at [sp + 16]
     emit_instr("stp\tx29, x30, [sp, #32]");      // Save fp/lr at [sp + 32]
     // Temp slot is at [sp + 48]
+    // Initialize temp slot to NULL to prevent crashes if used before being set
+    emit_instr("str\txzr, [sp, #48]");           // Temp slot = NULL
     
     // Save variadic argument registers x1-x7 to stack
     // x1 is already saved by caller, but we save x1-x7 for va_list
@@ -124,8 +142,15 @@ static void epilogue(int locals_size) {
     emit_instr("ldp\tx19, x22, [sp, #16]");      // Restore x19/x22 from [sp + 16]
     emit_instr("ldp\tx29, x30, [sp, #32]");      // Restore fp/lr from [sp + 32]
     // Temp slot at [sp + 48] doesn't need restoration
-    if (total > 0)
-        emit_instr("add\tsp, sp, #%d", total);
+    if (total > 0) {
+        if (total <= 4095) {
+            emit_instr("add\tsp, sp, #%d", total);
+        } else {
+            // Large stack frame - use emit_immediate
+            emit_immediate(9, total);
+            emit_instr("add\tsp, sp, x9");
+        }
+    }
     emit_instr("ret");
 }
 
@@ -145,8 +170,15 @@ static void epilogue_variadic(int locals_size) {
     emit_instr("ldp\tx19, x22, [sp, #16]");      // Restore x19/x22 from [sp + 16]
     emit_instr("ldp\tx29, x30, [sp, #32]");      // Restore fp/lr from [sp + 32]
     // Temp slot at [sp + 48] and va_args at [sp + 56] don't need restoration
-    if (total > 0)
-        emit_instr("add\tsp, sp, #%d", total);
+    if (total > 0) {
+        if (total <= 4095) {
+            emit_instr("add\tsp, sp, #%d", total);
+        } else {
+            // Large stack frame - use emit_immediate
+            emit_immediate(9, total);
+            emit_instr("add\tsp, sp, x9");
+        }
+    }
     emit_instr("ret");
 }
 
@@ -725,32 +757,16 @@ static void gen_instr(IRInstruction *instr) {
 
         case IR_LOAD:
             // Load from address in x8
-            // If args[0] is NULL, load from [x8] (for array subscript/struct member)
-            // Otherwise, x0 contains the address
+            // The address is always in x8 (from evaluating the pointer expression in lowerer.c)
             // NOTE: We do NOT save x8 to x10 here because x10 is used for binary op operands.
-            // If the old x8 value is needed, it should have been saved earlier by IR_LOAD_STACK.
-            if (instr->num_args == 0) {
-                // Load from address in x8
-                // Use 8-byte load for pointers and 64-bit values, ldrb for bytes (char)
-                if (instr->result && (instr->result->is_pointer || instr->result->is_64bit)) {
-                    emit_instr("ldr\tx8, [x8]");  // 8-byte load for pointers/64-bit
-                } else if (instr->result && instr->result->is_byte) {
-                    emit_instr("ldrb\tw8, [x8]");  // 1-byte load for char
-                } else {
-                    emit_instr("ldr\tw8, [x8]");  // 4-byte load for 32-bit integers
-                }
+            // If the old x8 value is needed, it should have been saved earlier by IR_SAVE_X8.
+            // Use 8-byte load for pointers and 64-bit values, ldrb for bytes (char)
+            if (instr->result && (instr->result->is_pointer || instr->result->is_64bit)) {
+                emit_instr("ldr\tx8, [x8]");  // 8-byte load for pointers/64-bit
+            } else if (instr->result && instr->result->is_byte) {
+                emit_instr("ldrb\tw8, [x8]");  // 1-byte load for char
             } else {
-                // Legacy behavior: x0 contains the address
-                if (instr->result && (instr->result->is_pointer || instr->result->is_64bit)) {
-                    emit_instr("ldr\tx0, [x0]");
-                    emit_instr("mov\tx8, x0");
-                } else if (instr->result && instr->result->is_byte) {
-                    emit_instr("ldrb\tw0, [x0]");
-                    emit_instr("mov\tx8, x0");
-                } else {
-                    emit_instr("ldr\tw0, [x0]");
-                    emit_instr("mov\tx8, x0");
-                }
+                emit_instr("ldr\tw8, [x8]");  // 4-byte load for 32-bit integers
             }
             x8_temp_type = 1;  // x8 now has a temp value (loaded value)
             x9_temp_type = 1;
@@ -786,7 +802,18 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx10, x8");
                 }
                 // Use 64-bit load for all stack values (safer for addresses)
-                emit_instr("ldr\tx0, [x29, #%d]", offset);
+                // Handle large offsets
+                if (offset > 4095 || offset < -4095) {
+                    // Very large offset - use emit_immediate to compute address
+                    emit_immediate(9, offset);
+                    emit_instr("add\tx9, x29, x9");
+                    emit_instr("ldr\tx0, [x9]");
+                } else if (offset > 504 || offset < -512) {
+                    emit_instr("add\tx9, x29, #%d", offset);
+                    emit_instr("ldr\tx0, [x9]");
+                } else {
+                    emit_instr("ldr\tx0, [x29, #%d]", offset);
+                }
                 emit_instr("mov\tx8, x0");
                 // Note: Don't save pointer to x22 here - it causes conflicts with temp register usage
                 if (old_x9_type == 1 || old_x9_type == 2) {
@@ -805,8 +832,14 @@ static void gen_instr(IRInstruction *instr) {
             // NOTE: We use x29 (frame pointer) for addressing to handle stack adjustments during calls
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int offset = (int)instr->result->offset;
-                // For large offsets (> 504), use indirect addressing
-                if (offset > 504 || offset < -512) {
+                // For large offsets (> 504 or < -512), or offsets > 4095 for add,
+                // use indirect addressing
+                if (offset > 4095 || offset < -4095) {
+                    // Very large offset - use emit_immediate to compute address
+                    emit_immediate(9, offset);
+                    emit_instr("add\tx9, x29, x9");
+                    emit_instr("str\tx8, [x9]");  // Store via computed address
+                } else if (offset > 504 || offset < -512) {
                     emit_instr("add\tx9, x29, #%d", offset);
                     emit_instr("str\tx8, [x9]");  // Store via computed address
                 } else {
@@ -829,8 +862,13 @@ static void gen_instr(IRInstruction *instr) {
             if (instr->result && instr->result->kind == IR_VALUE_INT) {
                 int param_reg = (int)instr->result->data.int_val;
                 int offset = (int)instr->result->offset;
-                // For large offsets (> 504), use indirect addressing
-                if (offset > 504 || offset < -512) {
+                // For large offsets, use indirect addressing
+                if (offset > 4095 || offset < -4095) {
+                    // Very large offset - use emit_immediate to compute address
+                    emit_immediate(9, offset);
+                    emit_instr("add\tx9, x29, x9");
+                    emit_instr("str\tx%d, [x9]", param_reg);  // Store via computed address
+                } else if (offset > 504 || offset < -512) {
                     emit_instr("add\tx9, x29, #%d", offset);
                     emit_instr("str\tx%d, [x9]", param_reg);  // Store via computed address
                 } else {
@@ -944,7 +982,45 @@ static void gen_instr(IRInstruction *instr) {
 
         case IR_STORE_INDIRECT_X20:
             // Store x8 (value) to [x20] (address)
-            emit_instr("str\tx8, [x20]");
+            // Use correct store width based on element size
+            if (instr->result && instr->result->elem_size > 0) {
+                int elem_size = instr->result->elem_size;
+                if (elem_size == 1) {
+                    emit_instr("strb\tw8, [x20]");  // Byte store for char
+                } else if (elem_size == 2) {
+                    emit_instr("strh\tw8, [x20]");  // Halfword store for short
+                } else if (elem_size == 4) {
+                    emit_instr("str\tw8, [x20]");   // Word store for int
+                } else {
+                    emit_instr("str\tx8, [x20]");  // Doubleword store for pointer/long
+                }
+            } else {
+                emit_instr("str\tx8, [x20]");  // Default to 64-bit store
+            }
+            break;
+
+        case IR_STORE_DIRECT_X22:
+            // Store x8 (value) to [x22] (address already in x22)
+            // Use correct store width based on element size
+            if (instr->result && instr->result->elem_size > 0) {
+                int elem_size = instr->result->elem_size;
+                if (elem_size == 1) {
+                    emit_instr("strb\tw8, [x22]");  // Byte store for char
+                } else if (elem_size == 2) {
+                    emit_instr("strh\tw8, [x22]");  // Halfword store for short
+                } else if (elem_size == 4) {
+                    emit_instr("str\tw8, [x22]");   // Word store for int
+                } else {
+                    emit_instr("str\tx8, [x22]");  // Doubleword store for pointer/long
+                }
+            } else {
+                emit_instr("str\tx8, [x22]");  // Default to 64-bit store
+            }
+            break;
+
+        case IR_STORE_X22_TO_X8:
+            // Store x22 to [x8] (address in x8, value in x22)
+            emit_instr("str\tx22, [x8]");
             break;
 
         case IR_LEA:
@@ -958,7 +1034,14 @@ static void gen_instr(IRInstruction *instr) {
                     emit_instr("mov\tx10, x8");
                 }
                 // Use frame pointer (x29) for addressing locals
-                emit_instr("add\tx8, x29, #%d", offset);
+                // Handle large offsets
+                if (offset > 4095 || offset < -4095) {
+                    // Very large offset - use emit_immediate
+                    emit_immediate(9, offset);
+                    emit_instr("add\tx8, x29, x9");
+                } else {
+                    emit_instr("add\tx8, x29, #%d", offset);
+                }
                 // Mark x8 as containing an address (for subsequent operations)
                 x8_temp_type = 0;
             }
@@ -1060,6 +1143,13 @@ static void gen_instr(IRInstruction *instr) {
             // x8 = x20 + x8 (add saved address to offset)
             // IR_SAVE_X8_TO_X20 saved the base address to x20
             emit_instr("add\tx8, x20, x8");
+            x8_temp_type = 1;
+            break;
+
+        case IR_ADD_X22:
+            // x8 = x22 + x8 (add saved address to offset)
+            // IR_SAVE_X8_TO_X22 saved the base address to x22
+            emit_instr("add\tx8, x22, x8");
             x8_temp_type = 1;
             break;
 

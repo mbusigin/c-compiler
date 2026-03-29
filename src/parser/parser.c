@@ -22,6 +22,19 @@ typedef struct TypedefEntry {
 static TypedefEntry *typedef_list = NULL;
 
 static void add_typedef_full(const char *name, Type *type) {
+    // First check if typedef already exists and update it
+    for (TypedefEntry *e = typedef_list; e; e = e->next) {
+        if (strcmp(e->name, name) == 0) {
+            // Update existing typedef entry
+            e->kind = type ? type->kind : TYPE_INT;
+            e->is_unsigned = type ? type->is_unsigned : false;
+            e->is_pointer = type ? (type->kind == TYPE_POINTER) : false;
+            e->full_type = type;
+            return;
+        }
+    }
+    
+    // Create new entry if not found
     TypedefEntry *entry = malloc(sizeof(TypedefEntry));
     entry->name = xstrdup(name);
     entry->kind = type ? type->kind : TYPE_INT;
@@ -70,7 +83,7 @@ static void add_struct(const char *name, Type *type) {
     struct_registry = entry;
 }
 
-static Type *find_struct(const char *name) {
+Type *find_struct(const char *name) {
     for (StructEntry *e = struct_registry; e; e = e->next) {
         if (strcmp(e->name, name) == 0) return e->type;
     }
@@ -322,10 +335,18 @@ static Type *parse_type(Parser *p) {
         
         // Check for struct definition { ... }
         if (check_p(p, TOKEN_LBRACE)) {
-            // Create new struct type with definition
-            Type *t = type_create(TYPE_STRUCT);
-            t->is_unsigned = false;
-            t->struct_name = struct_name;
+            // Check if struct already exists as forward declaration
+            Type *t = struct_name ? find_struct(struct_name) : NULL;
+            if (t && t->kind == TYPE_STRUCT) {
+                // Update existing forward declaration
+                free(struct_name);  // Don't need new copy
+                struct_name = t->struct_name;  // Use existing name
+            } else {
+                // Create new struct type with definition
+                t = type_create(TYPE_STRUCT);
+                t->is_unsigned = false;
+                t->struct_name = struct_name;
+            }
             
             advance_p(p);  // consume '{'
             
@@ -410,10 +431,10 @@ static Type *parse_type(Parser *p) {
             Type *existing = struct_name ? find_struct(struct_name) : NULL;
             if (existing) {
                 // Found existing definition - return a COPY
+                // This is safer as it avoids circular reference issues
                 free(struct_name);  // Free the name since the existing type has its own copy
                 
-                // Copy the existing type
-                Type *t = type_copy(existing);
+                Type *t = type_copy(existing);  // Return a copy, not the original
                 
                 // Handle pointer suffix
                 while (check_p(p, TOKEN_STAR)) {
@@ -427,6 +448,11 @@ static Type *parse_type(Parser *p) {
                 Type *t = type_create(TYPE_STRUCT);
                 t->is_unsigned = false;
                 t->struct_name = struct_name;
+                
+                // Register forward declaration so later definitions can update it
+                if (struct_name) {
+                    add_struct(struct_name, t);
+                }
                 
                 // Handle pointer suffix
                 while (check_p(p, TOKEN_STAR)) {
@@ -538,7 +564,7 @@ static Type *parse_type(Parser *p) {
                 // Found existing definition - return a COPY
                 free(union_name);
                 
-                Type *t = type_copy(existing);
+                Type *t = type_copy(existing);  // Return a copy, not the original
                 
                 while (check_p(p, TOKEN_STAR)) {
                     advance_p(p);
@@ -551,6 +577,11 @@ static Type *parse_type(Parser *p) {
                 Type *t = type_create(TYPE_UNION);
                 t->is_unsigned = false;
                 t->struct_name = union_name;
+                
+                // Register forward declaration so later definitions can update it
+                if (union_name) {
+                    add_struct(union_name, t);
+                }
                 
                 while (check_p(p, TOKEN_STAR)) {
                     advance_p(p);
@@ -637,6 +668,48 @@ static Type *parse_type(Parser *p) {
     else if (check_p(p, TOKEN_IDENTIFIER)) {
         char *name = token_name(p);
         
+        // Check for typedef BEFORE any other type checks
+        // This allows user typedefs to override builtin names
+        {
+            TypedefEntry *entry = find_typedef(name);
+            if (entry) {
+                free(name);
+                advance_p(p);  // consume typedef name
+                
+                // If we have full type info, use it
+                if (entry->full_type) {
+                    Type *t = type_copy(entry->full_type);
+                    
+                    // Handle pointer suffix
+                    while (check_p(p, TOKEN_STAR)) {
+                        advance_p(p);
+                        Type *ptr = type_pointer(t);
+                        t = ptr;
+                    }
+                    return t;
+                }
+                
+                // Fall back to basic type info
+                Type *t = type_create(entry->kind);
+                t->is_unsigned = entry->is_unsigned;
+                
+                // If typedef was a pointer type, wrap it
+                if (entry->is_pointer) {
+                    Type *ptr = type_pointer(t);
+                    t = ptr;
+                }
+                
+                // Handle additional pointer suffix
+                while (check_p(p, TOKEN_STAR)) {
+                    advance_p(p);
+                    Type *ptr = type_pointer(t);
+                    t = ptr;
+                }
+                
+                return t;
+            }
+        }
+        
         // Check for true compiler builtin types (not library-defined types)
         if (is_builtin_type(name)) {
             // Handle standard integer types
@@ -716,46 +789,6 @@ static Type *parse_type(Parser *p) {
                 Type *t = type_create(TYPE_INT);
                 return t;
             }
-        }
-        
-        // Could be a typedef name
-        TypedefEntry *entry = find_typedef(name);
-        free(name);
-        
-        if (entry) {
-            advance_p(p);  // consume typedef name
-            
-            // If we have full type info, use it
-            if (entry->full_type) {
-                Type *t = type_copy(entry->full_type);
-                
-                // Handle pointer suffix
-                while (check_p(p, TOKEN_STAR)) {
-                    advance_p(p);
-                    Type *ptr = type_pointer(t);
-                    t = ptr;
-                }
-                return t;
-            }
-            
-            // Fall back to basic type info
-            Type *t = type_create(entry->kind);
-            t->is_unsigned = entry->is_unsigned;
-            
-            // If typedef was a pointer type, wrap it
-            if (entry->is_pointer) {
-                Type *ptr = type_pointer(t);
-                t = ptr;
-            }
-            
-            // Handle additional pointer suffix
-            while (check_p(p, TOKEN_STAR)) {
-                advance_p(p);
-                Type *ptr = type_pointer(t);
-                t = ptr;
-            }
-            
-            return t;
         }
         
         // Not a typedef and not a builtin - don't advance, let caller handle

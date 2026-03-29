@@ -7,6 +7,7 @@
 #include "../common/error.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 static SymbolTable *current_symtab = NULL;
 static ASTNode *current_function = NULL;

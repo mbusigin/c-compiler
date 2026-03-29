@@ -30,10 +30,13 @@ typedef enum {
     IR_STORE_OFFSET,  // Store to [base_ptr + offset*4]
     IR_STORE_INDIRECT, // Store x8 to [x22] (address in x22, value in x8)
     IR_STORE_INDIRECT_X20, // Store x8 to [x20] (address in x20, value in x8)
+    IR_STORE_X22_TO_X8, // Store x22 to [x8] (address in x8, value in x22)
+    IR_STORE_DIRECT_X22, // Store x8 to [x22] directly (x22 already has address)
     IR_LOAD_STRING,    // Load string address into x8
     IR_SAVE_X8_TO_X22, // Save x8 to x22 (callee-saved, for struct member access)
     IR_LEA,           // Load effective address: x8 = sp + offset
-    IR_ADD_X21,       // x8 = x22 + x8 (add saved address to offset)
+    IR_ADD_X21,       // x8 = x20 + x8 (add saved address to offset, using x20)
+    IR_ADD_X22,       // x8 = x22 + x8 (add saved address to offset, using x22)
     IR_ADD_IMM64,     // x8 = x8 + imm (64-bit add for pointer arithmetic)
     IR_LOAD_EXTERNAL,  // Load from external symbol: x8 = &symbol_name
     IR_LOAD_FUNC_ADDR  // Load function address: x8 = &func_name (for function pointers)
