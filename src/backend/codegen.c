@@ -366,6 +366,16 @@ static void gen_instr(IRInstruction *instr) {
             break;
         }
 
+        case IR_JMP_IF_TRUE: {
+            const char *label = instr->label ? instr->label : ".Lend";
+            if (instr->num_args > 0 && instr->args[0]) {
+                emit_load_value(0, instr->args[0]);
+            }
+            // Jump to label if condition is TRUE (non-zero)
+            emit_instr("cbnz\tx0, %s", label);
+            break;
+        }
+
         case IR_RET:
             // If there's a return value argument, use it
             if (instr->num_args > 0 && instr->args[0]) {
@@ -1087,11 +1097,8 @@ static void gen_instr(IRInstruction *instr) {
         case IR_LOAD_FUNC_ADDR:
         case IR_LOAD_GLOBAL:
             // Load address of function or static global variable
-            // result->is_temp should be true, result->is_pointer should be true
-            // instr->label contains the symbol name
+            // For Mach-O: use _name for C functions/symbols
             if (instr->label) {
-                // Load address using adrp + add
-                // For Mach-O: use _name for C functions
                 const char *name = instr->label;
                 emit_instr("adrp\tx8, _%s@PAGE", name);
                 emit_instr("add\tx8, x8, _%s@PAGEOFF", name);
@@ -1171,8 +1178,10 @@ static void gen_block(IRBasicBlock *block) {
 static void gen_function(IRFunction *func) {
     // Calculate total locals size
     // Need to count both IR_ALLOCA instructions AND parameter stack slots
+    // AND track maximum offset from IR_STORE_STACK/IR_LOAD_STACK for locals
     int locals_size = 0;
     int max_param_offset = 0;
+    int max_local_offset = 0;
     for (size_t i = 0; i < list_size(func->blocks); i++) {
         IRBasicBlock *block = list_get(func->blocks, i);
         for (size_t j = 0; j < list_size(block->instructions); j++) {
@@ -1187,7 +1196,30 @@ static void gen_function(IRFunction *func) {
                     max_param_offset = offset;
                 }
             }
+            // Track local variable offsets from IR_STORE_STACK/IR_LOAD_STACK
+            if ((instr->opcode == IR_STORE_STACK || instr->opcode == IR_LOAD_STACK) && instr->result) {
+                int offset = (int)instr->result->offset;
+                // offset is relative to x29, so add 8 for the actual stack position
+                // We need locals_size to cover up to offset + 8
+                if (offset + 8 > max_local_offset) {
+                    max_local_offset = offset + 8;
+                }
+            }
+            // Also check for negative offsets (temp slots below x29)
+            if ((instr->opcode == IR_STORE_STACK || instr->opcode == IR_LOAD_STACK) && instr->result) {
+                int offset = (int)instr->result->offset;
+                if (offset < 0) {
+                    // Negative offsets go below x29 into the save area
+                    // These are handled by the save area, so we don't need extra space
+                }
+            }
         }
+    }
+    // locals_size is the sum of all IR_ALLOCA sizes
+    // max_local_offset is the maximum [x29, #offset] + 8
+    // The total frame must cover: callee saves (56 bytes) + max(locals_size, max_local_offset)
+    if (max_local_offset > locals_size) {
+        locals_size = max_local_offset;
     }
     // Add parameter stack space (max_param_offset + 8 for the last parameter's slot)
     // Note: We use >= 0 because offset 0 means 1 parameter at that offset

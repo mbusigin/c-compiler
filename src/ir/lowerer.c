@@ -342,11 +342,33 @@ static IRValue *lower_identifier(ASTNode *node) {
         }
         
         // Create IR_LOAD_EXTERNAL to load value from external symbol
-        IRInstruction *load_instr = ir_instr_create(IR_LOAD_EXTERNAL);
-        load_instr->result = result;
-        load_instr->label = symbol_name;
-        add_instr(load_instr);
-        return result;
+        // For static variables, use direct addressing (IR_LOAD_GLOBAL for address + IR_LOAD for value)
+        // For external variables, use GOT-based addressing (IR_LOAD_EXTERNAL does both)
+        if (global_sym && global_sym->is_static) {
+            // Load the address of the static variable
+            IRInstruction *addr_instr = ir_instr_create(IR_LOAD_GLOBAL);
+            addr_instr->result = result;
+            addr_instr->label = symbol_name;
+            add_instr(addr_instr);
+            // Save address to x22 for potential later use
+            IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8_TO_X22);
+            add_instr(save_addr);
+            // Dereference to get the value
+            IRInstruction *load_instr = ir_instr_create(IR_LOAD);
+            load_instr->result = ir_value_create(IR_VALUE_INT);
+            load_instr->result->is_temp = true;
+            load_instr->result->is_pointer = result->is_pointer;
+            load_instr->num_args = 0;
+            add_instr(load_instr);
+            return load_instr->result;
+        } else {
+            // External symbol - use GOT-based addressing
+            IRInstruction *load_instr = ir_instr_create(IR_LOAD_EXTERNAL);
+            load_instr->result = result;
+            load_instr->label = symbol_name;
+            add_instr(load_instr);
+            return result;
+        }
     }
     
     // For non-parameters, non-variables, and non-functions, create a dummy value
@@ -561,8 +583,89 @@ static IRValue *lower_unary_expr(ASTNode *node) {
                 add_instr(addr_instr);
                 return addr_instr->result;
             }
+            
+            // Check if it's a global variable
+            Symbol *global_sym = symtab_lookup(current_symtab, name);
+            if (global_sym && global_sym->kind == SYMBOL_VARIABLE) {
+                // &global_var — we just need the address, no dereference
+                IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                addr_val->is_constant = false;
+                addr_val->is_temp = true;
+                addr_val->is_address = true;
+                addr_val->is_pointer = true;
+                
+                if (global_sym->is_static) {
+                    // Static global: use IR_LOAD_GLOBAL to get address directly
+                    IRInstruction *addr_instr = ir_instr_create(IR_LOAD_GLOBAL);
+                    addr_instr->result = addr_val;
+                    addr_instr->label = name;
+                    add_instr(addr_instr);
+                } else {
+                    // External global: use IR_LOAD_GLOBAL for address
+                    // (all globals use adrp+add on macOS)
+                    IRInstruction *addr_instr = ir_instr_create(IR_LOAD_GLOBAL);
+                    addr_instr->result = addr_val;
+                    addr_instr->label = name;
+                    add_instr(addr_instr);
+                }
+                return addr_val;
+            }
         }
-        // If not a local variable, return NULL (should not happen in valid code)
+        // Handle &(ptr->member) — address of struct member through pointer
+        if (operand_node && operand_node->type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+            // Evaluate the pointer (base)
+            IRValue *base = lower_expression(operand_node->data.member.expr);
+            size_t member_off = operand_node->data.member.member_offset;
+            if (member_off > 0) {
+                // Save base to x22
+                IRInstruction *save_base = ir_instr_create(IR_SAVE_X8_TO_X22);
+                save_base->result = base;
+                add_instr(save_base);
+                // Load member offset as immediate
+                IRValue *off_val = ir_value_create(IR_VALUE_INT);
+                off_val->data.int_val = (long long)member_off;
+                off_val->is_constant = 1;
+                off_val->is_temp = 1;
+                IRInstruction *off_instr = ir_instr_create(IR_CONST_INT);
+                off_instr->result = off_val;
+                add_instr(off_instr);
+                // x8 = x22 + offset
+                IRInstruction *add_off = ir_instr_create(IR_ADD_X22);
+                add_off->result = ir_value_create(IR_VALUE_INT);
+                add_off->result->is_temp = 1;
+                add_off->result->is_pointer = 1;
+                add_off->result->is_64bit = 1;
+                add_off->num_args = 0;
+                add_instr(add_off);
+                return add_off->result;
+            }
+            // member_off == 0, base pointer is already the address
+            return base;
+        }
+        
+        // Handle &(var.member) — address of struct member of local variable
+        if (operand_node && operand_node->type == AST_MEMBER_ACCESS_EXPR) {
+            ASTNode *base_expr = operand_node->data.member.expr;
+            size_t member_off = operand_node->data.member.member_offset;
+            // Get address of the base variable
+            if (base_expr && base_expr->type == AST_IDENTIFIER_EXPR) {
+                LocalVar *base_lv = locals_lookup(base_expr->data.identifier.name);
+                if (base_lv) {
+                    IRValue *addr_val = ir_value_create(IR_VALUE_INT);
+                    addr_val->offset = base_lv->offset + (int)member_off;
+                    addr_val->is_constant = false;
+                    addr_val->is_temp = true;
+                    addr_val->is_address = 1;
+                    addr_val->is_pointer = 1;
+                    IRInstruction *addr_instr = ir_instr_create(IR_LEA);
+                    addr_instr->result = addr_val;
+                    add_instr(addr_instr);
+                    return addr_instr->result;
+                }
+            }
+        }
+        
+        // If not a local, global variable, or member access, return NULL
         IRValue *null_val = ir_value_create(IR_VALUE_INT);
         null_val->is_constant = true;
         null_val->data.int_val = 0;
@@ -984,6 +1087,113 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
             ret_val->is_temp = true;
             return ret_val;
         }
+        
+        // Check if it's a global variable
+        Symbol *global_sym = symtab_lookup(current_symtab, lhs->data.identifier.name);
+        if (global_sym && global_sym->kind == SYMBOL_VARIABLE) {
+            // This is a global variable assignment
+            const char *name = lhs->data.identifier.name;
+            IRValue *result_val = NULL;
+            IRValue *load_result = NULL;
+            
+            // For compound assignment, load current value first
+            if (op >= 0) {
+                if (global_sym && global_sym->is_static) {
+                    // Load address, then dereference
+                    load_result = ir_value_create(IR_VALUE_INT);
+                    load_result->is_constant = false;
+                    load_result->is_temp = true;
+                    IRInstruction *addr_instr = ir_instr_create(IR_LOAD_GLOBAL);
+                    addr_instr->result = load_result;
+                    addr_instr->label = name;
+                    add_instr(addr_instr);
+                    IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8_TO_X22);
+                    add_instr(save_addr);
+                    IRInstruction *deref_instr = ir_instr_create(IR_LOAD);
+                    load_result = ir_value_create(IR_VALUE_INT);
+                    load_result->is_constant = false;
+                    load_result->is_temp = true;
+                    deref_instr->result = load_result;
+                    deref_instr->num_args = 0;
+                    add_instr(deref_instr);
+                } else {
+                    load_result = ir_value_create(IR_VALUE_INT);
+                    load_result->is_constant = false;
+                    load_result->is_temp = true;
+                    IRInstruction *load_instr = ir_instr_create(IR_LOAD_EXTERNAL);
+                    load_instr->result = load_result;
+                    load_instr->label = name;
+                    add_instr(load_instr);
+                }
+            }
+            
+            // Evaluate RHS
+            IRValue *rhs_val = lower_expression(node->data.assignment.right);
+            
+            // If compound assignment, emit the operation
+            if (op >= 0) {
+                IROpcode ir_op = 0;
+                switch (op) {
+                    case OP_ADD: ir_op = IR_ADD; break;
+                    case OP_SUB: ir_op = IR_SUB; break;
+                    case OP_MUL: ir_op = IR_MUL; break;
+                    case OP_DIV: ir_op = IR_DIV; break;
+                    case OP_MOD: ir_op = IR_MOD; break;
+                    case OP_LSHIFT: ir_op = IR_SHL; break;
+                    case OP_RSHIFT: ir_op = IR_SHR; break;
+                    case OP_BITAND: ir_op = IR_AND; break;
+                    case OP_BITOR: ir_op = IR_OR; break;
+                    case OP_BITXOR: ir_op = IR_XOR; break;
+                    default: break;
+                }
+                if (ir_op != 0) {
+                    IRInstruction *op_instr = ir_instr_create(ir_op);
+                    op_instr->result = ir_value_create(IR_VALUE_INT);
+                    op_instr->result->is_constant = false;
+                    op_instr->result->is_temp = true;
+                    op_instr->args[0] = load_result;
+                    op_instr->args[1] = rhs_val;
+                    op_instr->num_args = 2;
+                    add_instr(op_instr);
+                    result_val = op_instr->result;
+                }
+            }
+            
+            if (result_val == NULL) {
+                result_val = rhs_val;
+            }
+            
+            // Save the computed value to temp slot before loading address
+            IRInstruction *save_val = ir_instr_create(IR_SAVE_X8);
+            add_instr(save_val);
+            
+            // Load the ADDRESS of the global variable (not the value)
+            IRInstruction *addr_instr = ir_instr_create(IR_LOAD_GLOBAL);
+            addr_instr->result = ir_value_create(IR_VALUE_INT);
+            addr_instr->result->is_constant = false;
+            addr_instr->result->is_temp = true;
+            addr_instr->label = name;
+            add_instr(addr_instr);
+            
+            // Save address to x22 (callee-saved)
+            IRInstruction *save_addr = ir_instr_create(IR_SAVE_X8_TO_X22);
+            add_instr(save_addr);
+            
+            // Restore the value from temp slot to x8
+            IRInstruction *restore_val = ir_instr_create(IR_RESTORE_X8_RESULT);
+            add_instr(restore_val);
+            
+            // Store x8 to [x22] (store value at address)
+            IRInstruction *store_indirect = ir_instr_create(IR_STORE_DIRECT_X22);
+            store_indirect->result = ir_value_create(IR_VALUE_INT);
+            store_indirect->result->elem_size = 8;
+            add_instr(store_indirect);
+            
+            IRValue *ret_val = ir_value_create(IR_VALUE_INT);
+            ret_val->is_constant = false;
+            ret_val->is_temp = true;
+            return ret_val;
+        }
     } else if (lhs && lhs->type == AST_ARRAY_SUBSCRIPT_EXPR) {
         // Handle array subscript assignment: base[index] = value
         ASTNode *base_node = lhs->data.subscript.array;
@@ -1282,14 +1492,15 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
                         case TYPE_CHAR:
                         case TYPE_BOOL: store_indirect->result->elem_size = 1; break;
                         case TYPE_SHORT: store_indirect->result->elem_size = 2; break;
-                        case TYPE_INT: store_indirect->result->elem_size = 4; break;
+                        case TYPE_INT:
+                        case TYPE_ENUM: store_indirect->result->elem_size = 4; break;
                         case TYPE_LONG:
                         case TYPE_LONGLONG:
                         case TYPE_POINTER: store_indirect->result->elem_size = 8; break;
                         default: store_indirect->result->elem_size = 8; break;
                     }
                 } else {
-                    store_indirect->result->elem_size = 8;  // Default to 64-bit
+                    store_indirect->result->elem_size = 8;
                 }
                 add_instr(store_indirect);
                 
@@ -1336,16 +1547,17 @@ static IRValue *lower_assignment_expr(ASTNode *node) {
         if (lhs->type_info) {
             switch (lhs->type_info->kind) {
                 case TYPE_CHAR:
-                        case TYPE_BOOL: store_indirect->result->elem_size = 1; break;
+                case TYPE_BOOL: store_indirect->result->elem_size = 1; break;
                 case TYPE_SHORT: store_indirect->result->elem_size = 2; break;
-                case TYPE_INT: store_indirect->result->elem_size = 4; break;
+                case TYPE_INT:
+                case TYPE_ENUM: store_indirect->result->elem_size = 4; break;
                 case TYPE_LONG:
                 case TYPE_LONGLONG:
                 case TYPE_POINTER: store_indirect->result->elem_size = 8; break;
                 default: store_indirect->result->elem_size = 8; break;
             }
         } else {
-            store_indirect->result->elem_size = 8;  // Default to 64-bit
+            store_indirect->result->elem_size = 8;
         }
         add_instr(store_indirect);
         
@@ -1528,25 +1740,69 @@ static void lower_variable_decl(ASTNode *node) {
                 }
             }
         } else if (node->data.variable.init->type == AST_INITIALIZER_LIST) {
-            // Struct/compound initializer - initialize each member
-            // For now, emit zero for the entire struct to avoid storing garbage
-            // TODO: Properly handle individual field initializers
-            IRValue *zero_val = ir_value_create(IR_VALUE_INT);
-            zero_val->data.int_val = 0;
-            zero_val->is_constant = true;
-
-            zero_val->is_temp = true;  // Value is in x8 after IR_CONST_INT
-            IRInstruction *zero_instr = ir_instr_create(IR_CONST_INT);
-            zero_instr->result = zero_val;
-            add_instr(zero_instr);
+            // Struct/compound initializer - initialize each field
+            // Get the struct type to determine field offsets
+            Type *struct_type = node->type_info;
+            if (!struct_type) {
+                // Use the type from the AST node
+                if (node->data.variable.var_type) struct_type = node->data.variable.var_type;
+            }
+            List *init_elements = node->data.variable.init->data.init_list.elements;
             
-            // Store zero to [sp, #offset]
-            IRValue *result = ir_value_create(IR_VALUE_INT);
-            result->offset = var_offset;
-            result->param_reg = -2;
-            IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
-            store_i->result = result;
-            add_instr(store_i);
+            // First zero-initialize the entire struct
+            // For small structs (up to 16 bytes), store zero once
+            int struct_size = struct_type ? (int)struct_type->size : 8;
+            for (int zero_off = 0; zero_off < struct_size; zero_off += 8) {
+                IRValue *zero_val = ir_value_create(IR_VALUE_INT);
+                zero_val->data.int_val = 0;
+                zero_val->is_constant = true;
+                zero_val->is_temp = true;
+                IRInstruction *zero_instr = ir_instr_create(IR_CONST_INT);
+                zero_instr->result = zero_val;
+                add_instr(zero_instr);
+                
+                IRValue *result = ir_value_create(IR_VALUE_INT);
+                result->offset = var_offset + zero_off;
+                result->param_reg = -2;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = result;
+                add_instr(store_i);
+            }
+            
+            // Now initialize each field from the initializer list
+            int field_count = init_elements ? (int)list_size(init_elements) : 0;
+            for (int i = 0; i < field_count; i++) {
+                ASTNode *field_init = (ASTNode *)list_get(init_elements, i);
+                if (!field_init) continue;
+                
+                // Determine field offset from struct type
+                int field_offset = 0;
+                int field_size = 8;  // default to 64-bit
+                if (struct_type && struct_type->kind == TYPE_STRUCT && (int)struct_type->num_members > i) {
+                    StructMember *m = &struct_type->members[i];
+                    field_offset = (int)m->offset;
+                    field_size = (int)m->type->size;
+                    if (field_size < 1) field_size = 8;
+                } else if (struct_type && struct_type->kind == TYPE_ARRAY) {
+                    // Array initializer
+                    int elem_size = (struct_type->base && struct_type->base->size > 0) ? (int)struct_type->base->size : 4;
+                    field_offset = i * elem_size;
+                    field_size = elem_size;
+                }
+                
+                // Evaluate the field initializer
+                IRValue *init_val = lower_expression(field_init);
+                (void)init_val;
+                
+                // Store to the appropriate offset within the struct
+                IRValue *result = ir_value_create(IR_VALUE_INT);
+                result->offset = var_offset + field_offset;
+                result->param_reg = -2;
+                result->elem_size = field_size;
+                IRInstruction *store_i = ir_instr_create(IR_STORE_STACK);
+                store_i->result = result;
+                add_instr(store_i);
+            }
         } else {
             // Scalar initializer
             // Evaluate initializer → x0 = value, x8 = value
@@ -2441,27 +2697,179 @@ static void lower_for_stmt(ASTNode *node) {
 
 // Lower a switch statement (simple implementation using if-else chain)
 static void lower_switch_stmt(ASTNode *node) {
-    // For a simple implementation, we handle case/default by converting to if-else
-    
+    /* Lower switch as if-else chain */
     const char *end_label = new_label();
-    
-    // Push the switch end label for break statements
     loop_push(NULL, NULL, end_label);
     
-    // Evaluate the switch expression
+    /* Evaluate the switch expression and save to stack */
     if (node->data.switch_stmt.expr) {
         (void)lower_expression(node->data.switch_stmt.expr);
     }
+    int switch_slot = locals_size;
+    locals_size += 8;
+    IRValue *sv = ir_value_create(IR_VALUE_INT);
+    sv->offset = switch_slot;
+    sv->param_reg = -2;
+    IRInstruction *ss = ir_instr_create(IR_STORE_STACK);
+    ss->result = sv;
+    add_instr(ss);
+    IRValue *sz = ir_value_create(IR_VALUE_INT);
+    sz->data.int_val = 8;
+    sz->is_constant = 1;
+    sz->is_temp = 1;
+    IRInstruction *ai = ir_instr_create(IR_ALLOCA);
+    ai->result = sz;
+    add_instr(ai);
     
-    // Lower the body (case labels will be handled by lower_statement)
-    if (node->data.switch_stmt.body) {
-        lower_statement(node->data.switch_stmt.body);
+    /* Collect case/default nodes */
+    ASTNode *body = node->data.switch_stmt.body;
+    int num_cases = 0;
+    ASTNode *cases_arr[256];
+    ASTNode *default_node = NULL;
+    
+    if (body && body->type == AST_COMPOUND_STMT) {
+        for (size_t i = 0; i < list_size(body->data.compound.stmts); i++) {
+            ASTNode *s = (ASTNode *)list_get(body->data.compound.stmts, i);
+            if (s->type == AST_CASE_STMT && num_cases < 256) {
+                cases_arr[num_cases++] = s;
+            } else if (s->type == AST_DEFAULT_STMT) {
+                default_node = s;
+            }
+        }
     }
     
-    // End label
-    IRInstruction *end_lbl = ir_instr_create(IR_LABEL);
-    end_lbl->label = end_label;
-    add_instr(end_lbl);
+    /* For each case: reload switch val, eval case expr, compare, conditional jump */
+    for (int i = 0; i < num_cases; i++) {
+        ASTNode *cn = cases_arr[i];
+        
+        /* Load switch value from stack */
+        IRValue *sw_load = ir_value_create(IR_VALUE_INT);
+        sw_load->offset = switch_slot;
+        sw_load->param_reg = -2;
+        sw_load->is_temp = 1;
+        IRInstruction *ld_sw = ir_instr_create(IR_LOAD_STACK);
+        ld_sw->result = sw_load;
+        add_instr(ld_sw);
+        
+        /* Save to x22 */
+        IRInstruction *sv_x22 = ir_instr_create(IR_SAVE_X8_TO_X22);
+        sv_x22->result = sw_load;
+        add_instr(sv_x22);
+        
+        /* Evaluate case expression into x8 */
+        if (cn->data.case_stmt.case_expr) {
+            if (cn->data.case_stmt.case_expr->type == AST_INTEGER_LITERAL_EXPR) {
+                IRValue *ic = ir_value_create(IR_VALUE_INT);
+                ic->data.int_val = cn->data.case_stmt.case_expr->data.int_literal.value;
+                ic->is_constant = 1;
+                ic->is_temp = 1;
+                IRInstruction *ci = ir_instr_create(IR_CONST_INT);
+                ci->result = ic;
+                add_instr(ci);
+            } else {
+                (void)lower_expression(cn->data.case_stmt.case_expr);
+            }
+        } else {
+            IRValue *zc = ir_value_create(IR_VALUE_INT);
+            zc->data.int_val = 0;
+            zc->is_constant = 1;
+            zc->is_temp = 1;
+            IRInstruction *zi = ir_instr_create(IR_CONST_INT);
+            zi->result = zc;
+            add_instr(zi);
+        }
+        
+        /* Save case value to temp stack slot */
+        int case_slot = locals_size;
+        locals_size += 8;
+        IRValue *cs_v = ir_value_create(IR_VALUE_INT);
+        cs_v->offset = case_slot;
+        cs_v->param_reg = -2;
+        IRInstruction *cs_s = ir_instr_create(IR_STORE_STACK);
+        cs_s->result = cs_v;
+        add_instr(cs_s);
+        IRValue *cs_sz = ir_value_create(IR_VALUE_INT);
+        cs_sz->data.int_val = 8;
+        cs_sz->is_constant = 1;
+        cs_sz->is_temp = 1;
+        IRInstruction *cs_a = ir_instr_create(IR_ALLOCA);
+        cs_a->result = cs_sz;
+        add_instr(cs_a);
+        
+        /* Reload switch value from x22 */
+        IRInstruction *rest = ir_instr_create(IR_RESTORE_X8_FROM_X22);
+        rest->result = ir_value_create(IR_VALUE_INT);
+        rest->result->is_temp = 1;
+        add_instr(rest);
+        
+        /* Save restored switch to x10 */
+        IRInstruction *save_x10 = ir_instr_create(IR_SAVE_X8);
+        save_x10->result = rest->result;
+        add_instr(save_x10);
+        
+        /* Reload case value from stack */
+        IRValue *cv_load = ir_value_create(IR_VALUE_INT);
+        cv_load->offset = case_slot;
+        cv_load->param_reg = -2;
+        cv_load->is_temp = 1;
+        IRInstruction *ld_cv = ir_instr_create(IR_LOAD_STACK);
+        ld_cv->result = cv_load;
+        add_instr(ld_cv);
+        
+        /* Compare */
+        IRInstruction *cmp = ir_instr_create(IR_CMP_EQ);
+        cmp->result = ir_value_create(IR_VALUE_INT);
+        cmp->result->is_temp = 1;
+        cmp->args[0] = rest->result;
+        cmp->args[1] = cv_load;
+        cmp->num_args = 2;
+        add_instr(cmp);
+        
+        /* If equal, jump to case body */
+        const char *clbl = new_label();
+        const char *skip_lbl = new_label();
+        IRInstruction *jmpif = ir_instr_create(IR_JMP_IF_TRUE);
+        jmpif->label = clbl;
+        jmpif->args[0] = cmp->result;
+        jmpif->num_args = 1;
+        add_instr(jmpif);
+        
+        /* If not equal, skip this case */
+        IRInstruction *jmp_skip = ir_instr_create(IR_JMP);
+        jmp_skip->label = skip_lbl;
+        add_instr(jmp_skip);
+        
+        /* Case body label */
+        IRInstruction *cl = ir_instr_create(IR_LABEL);
+        cl->label = clbl;
+        add_instr(cl);
+        
+        if (cn->data.case_stmt.stmt) {
+            lower_statement(cn->data.case_stmt.stmt);
+        }
+        
+        /* Jump to end */
+        IRInstruction *je = ir_instr_create(IR_JMP);
+        je->label = end_label;
+        add_instr(je);
+        
+        /* Skip label for next case */
+        IRInstruction *sl = ir_instr_create(IR_LABEL);
+        sl->label = skip_lbl;
+        add_instr(sl);
+    }
+    
+    /* Default case */
+    if (default_node) {
+        if (default_node->data.default_stmt.stmt) {
+            lower_statement(default_node->data.default_stmt.stmt);
+        }
+    }
+    
+    /* End label */
+    IRInstruction *el = ir_instr_create(IR_LABEL);
+    el->label = end_label;
+    add_instr(el);
     
     loop_pop();
 }
@@ -2521,21 +2929,18 @@ static void lower_statement(ASTNode *node) {
             }
             break;
         }
-        case AST_CASE_STMT: {
-            // For now, just lower the statement inside the case
-            // A proper implementation would emit a label and conditional jump
+        case AST_CASE_STMT:
+            /* Case bodies are handled by lower_switch_stmt */
             if (node->data.case_stmt.stmt) {
                 lower_statement(node->data.case_stmt.stmt);
             }
             break;
-        }
-        case AST_DEFAULT_STMT: {
-            // For now, just lower the statement inside the default
+        case AST_DEFAULT_STMT:
+            /* Default bodies are handled by lower_switch_stmt */
             if (node->data.default_stmt.stmt) {
                 lower_statement(node->data.default_stmt.stmt);
             }
             break;
-        }
         default:
             // Handle expression nodes (for loop init can be an expression)
             if (node->type >= AST_BINARY_EXPR && node->type <= AST_COMMA_EXPR) {

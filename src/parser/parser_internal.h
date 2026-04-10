@@ -24,15 +24,15 @@ ASTNode *parse_function_definition(Parser *p, Type *return_type, const char *nam
 
 // Utility functions
 void expect(Parser *p, TokenType t, const char *msg);
-bool check_p(Parser *p, TokenType t);
-Token advance_p(Parser *p);
-Token peek_p(Parser *p);
-Token previous_p(Parser *p);
+int check_p(Parser *p, TokenType t);
+void advance_p(Parser *p, Token *out);
+void peek_p(Parser *p, Token *out);
+void previous_p(Parser *p, Token *out);
 void error_at(Parser *p, Token *token, const char *message);
 void parser_error(Parser *p, const char *message);
 void error_at_current(Parser *p, const char *message);
 
 // Parser helper macros
-#define PARSER_Synchronized(p) for (bool _sync = (p)->panic_mode ? (advance_p(p), (p)->panic_mode = false, true) : true; _sync; _sync = false)
+#define PARSER_Synchronized(p) for (int _sync = (p)->panic_mode ? (advance_p(p, ((void*)0)), (p)->panic_mode = 0, 1) : 1; _sync; _sync = 0)
 
 #endif // PARSER_INTERNAL_H

@@ -300,7 +300,7 @@ $(STAGE1): $(STAGE0) | $(BUILD_DIR)
 		base=$$(basename "$$src" .c); \
 		total=$$((total + 1)); \
 		echo -n "  Compiling $$src... "; \
-		if $(STAGE0) -Isrc -I include -o $(STAGE0_ASM)/$$base.s $$src 2>/dev/null; then \
+		if $(STAGE0) -Isrc -Isysincludes -o $(STAGE0_ASM)/$$base.s $$src 2>/dev/null; then \
 			if [ -f $(STAGE0_ASM)/$$base.s ]; then \
 				echo "OK"; \
 				success=$$((success + 1)); \
@@ -372,14 +372,30 @@ $(STAGE2): $(STAGE1) | $(BUILD_DIR)
 		exit 1; \
 	fi; \
 	mkdir -p $(BUILD_DIR)/stage1_asm; \
-	success=0; total=0; \
+	success=0; failed=0; total=0; \
 	for src in $(ALL_SRC); do \
 		base=$$(basename "$$src" .c); \
 		total=$$((total + 1)); \
-		if $(STAGE1) -Isrc -I include -o $(BUILD_DIR)/stage1_asm/$$base.s $$src 2>/dev/null; then \
-			success=$$((success + 1)); \
+		echo -n "  stage1 compiling $$src... "; \
+		if timeout 30 $(STAGE1) -Isrc -Isysincludes -o $(BUILD_DIR)/stage1_asm/$$base.s $$src 2>/dev/null; then \
+			if [ -f $(BUILD_DIR)/stage1_asm/$$base.s ]; then \
+				echo "OK"; \
+				success=$$((success + 1)); \
+			else \
+				echo "FAIL (no output)"; \
+				failed=$$((failed + 1)); \
+			fi; \
+		else \
+			rc=$$?; \
+			if [ $$rc -eq 124 ]; then \
+				echo "FAIL (timeout)"; \
+			else \
+				echo "FAIL (exit $$rc)"; \
+			fi; \
+			failed=$$((failed + 1)); \
 		fi; \
 	done; \
+	echo "stage2 compilation: $$success/$$total succeeded, $$failed failed"; \
 	if [ $$success -eq $$total ]; then \
 		objs=""; \
 		for asm in $(BUILD_DIR)/stage1_asm/*.s; do \
@@ -408,17 +424,31 @@ self-verify:
 		echo "FAIL" > $(BUILD_DIR)/convergence.txt; \
 		exit 1; \
 	fi; \
-	echo "Building stage2 with stage1..."; \
-	$(MAKE) stage2 2>/dev/null; \
-	if [ ! -f $(STAGE2) ]; then \
-		echo "Error: stage2 compiler could not be built"; \
+	echo "Sanity check: testing stage1 compiler..."; \
+	mkdir -p $(BUILD_DIR)/verify; \
+	echo "int main(void) { return 0; }" > $(BUILD_DIR)/verify/sanity.c; \
+	if ! timeout 10 $(STAGE1) -o $(BUILD_DIR)/verify/sanity.s $(BUILD_DIR)/verify/sanity.c 2>/dev/null; then \
+		echo "Warning: stage1 compiler failed sanity check"; \
 		echo ""; \
-		echo "CONVERGENCE: FAIL - stage2 not available"; \
+		echo "CONVERGENCE: FAIL - stage1 compiler is not functional"; \
+		echo "The self-compiled compiler cannot compile even trivial input."; \
+		echo "FAIL" > $(BUILD_DIR)/convergence.txt; \
+		echo "========================================="; \
+		exit 1; \
+	fi; \
+	echo "stage1 sanity check passed."; \
+	echo ""; \
+	echo "Building stage2 with stage1..."; \
+	$(MAKE) stage2; \
+	if [ ! -f $(STAGE2) ]; then \
+		echo ""; \
+		echo "CONVERGENCE: FAIL - stage2 could not be built"; \
+		echo "The stage1 compiler could not compile all source files."; \
 		echo "FAIL" > $(BUILD_DIR)/convergence.txt; \
 		exit 1; \
 	fi; \
+	echo ""; \
 	echo "Comparing stage1 and stage2 output..."; \
-	mkdir -p $(BUILD_DIR)/verify; \
 	$(STAGE1) -o $(BUILD_DIR)/verify/stage1.s tests/hello.c 2>/dev/null; \
 	$(STAGE2) -o $(BUILD_DIR)/verify/stage2.s tests/hello.c 2>/dev/null; \
 	if diff -q $(BUILD_DIR)/verify/stage1.s $(BUILD_DIR)/verify/stage2.s >/dev/null 2>&1; then \

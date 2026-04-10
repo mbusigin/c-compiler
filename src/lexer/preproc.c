@@ -28,9 +28,10 @@ typedef struct Macro {
 } Macro;
 
 static Macro *macro_list = NULL;
+static bool preproc_initialized = false;
 
 // Include path for searching headers
-#define MAX_INCLUDE_PATHS 16
+#define MAX_INCLUDE_PATHS 32
 static char *include_paths[MAX_INCLUDE_PATHS];
 static int num_include_paths = 0;
 
@@ -68,20 +69,26 @@ static Macro *find_macro(const char *name) {
 
 // Add a macro definition
 static void add_macro(const char *name, const char *value, bool is_function_like, char **params, int num_params) {
-    // Remove existing macro if any
-    Macro **prev = &macro_list;
-    while (*prev) {
-        if (strcmp((*prev)->name, name) == 0) {
-            Macro *old = *prev;
-            *prev = old->next;
-            free(old->name);
-            free(old->value);
-            for (int i = 0; i < old->num_params; i++) free(old->params[i]);
-            free(old->params);
-            free(old);
+    // Remove existing macro if any - use simple pointer traversal
+    Macro *curr = macro_list;
+    Macro *prev = NULL;
+    while (curr) {
+        if (strcmp(curr->name, name) == 0) {
+            // Found existing - remove it
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                macro_list = curr->next;
+            }
+            free(curr->name);
+            free(curr->value);
+            for (int i = 0; i < curr->num_params; i++) free(curr->params[i]);
+            free(curr->params);
+            free(curr);
             break;
         }
-        prev = &(*prev)->next;
+        prev = curr;
+        curr = curr->next;
     }
     
     Macro *m = xmalloc(sizeof(Macro));
@@ -597,13 +604,50 @@ static char *preprocess_source(const char *source, int depth, const char *filena
     return expanded;
 }
 
+// Initialize preprocessor with system include paths and built-in defines
+static void preproc_init(void) {
+    if (preproc_initialized) return;
+    preproc_initialized = true;
+    
+    // Add built-in defines
+    add_macro("__STDC__", "1", false, NULL, 0);
+    add_macro("__STDC_VERSION__", "201112L", false, NULL, 0);
+    add_macro("__STDC_HOSTED__", "1", false, NULL, 0);
+    add_macro("__apple__", "1", false, NULL, 0);
+    add_macro("__APPLE__", "1", false, NULL, 0);
+    add_macro("__MACH__", "1", false, NULL, 0);
+    add_macro("__aarch64__", "1", false, NULL, 0);
+    add_macro("__ARM64_ARCH_8__", "1", false, NULL, 0);
+    add_macro("__LITTLE_ENDIAN__", "1", false, NULL, 0);
+    add_macro("__BYTE_ORDER__", "1234", false, NULL, 0);
+    add_macro("__ORDER_LITTLE_ENDIAN__", "1234", false, NULL, 0);
+    add_macro("__ORDER_BIG_ENDIAN__", "4321", false, NULL, 0);
+    add_macro("__SIZE_TYPE__", "unsigned long", false, NULL, 0);
+    add_macro("__PTRDIFF_TYPE__", "long", false, NULL, 0);
+    add_macro("__INTPTR_TYPE__", "long", false, NULL, 0);
+    add_macro("__UINTPTR_TYPE__", "unsigned long", false, NULL, 0);
+    add_macro("__SIZEOF_INT__", "4", false, NULL, 0);
+    add_macro("__SIZEOF_LONG__", "8", false, NULL, 0);
+    add_macro("__SIZEOF_POINTER__", "8", false, NULL, 0);
+    add_macro("__SIZEOF_LONG_LONG__", "8", false, NULL, 0);
+    add_macro("__SIZEOF_SHORT__", "2", false, NULL, 0);
+    add_macro("__SIZEOF_FLOAT__", "4", false, NULL, 0);
+    add_macro("__SIZEOF_DOUBLE__", "8", false, NULL, 0);
+    add_macro("__CHAR_BIT__", "8", false, NULL, 0);
+    
+    // Add sysincludes as include path
+    preproc_add_include_path("sysincludes");
+}
+
 // Main preprocessing entry point
 char *preprocess(const char *source) {
+    preproc_init();
     return preprocess_source(source, 0, NULL);
 }
 
 // Preprocess a file
 char *preprocess_file(const char *filename) {
+    preproc_init();
     char *content = read_file(filename);
     if (!content) return NULL;
     

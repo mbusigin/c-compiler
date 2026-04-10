@@ -130,11 +130,11 @@ static void expect(Parser *p, TokenType t, const char *msg);
 
 // Helper functions
 static void advance_p(Parser *p) { 
-    p->previous = p->current; 
-    p->current = lexer_next_token(p->lexer); 
+    token_copy(&p->previous, &p->current); 
+    lexer_next_token(p->lexer, &p->current); 
 }
 static TokenType peek_p(Parser *p) { return p->current.type; }
-static bool check_p(Parser *p, TokenType t) { return peek_p(p) == t; }
+static int check_p(Parser *p, TokenType t) { return peek_p(p) == t; }
 
 // Look at the token after the current one without consuming it
 __attribute__((unused))
@@ -145,7 +145,8 @@ static TokenType peek_next_p(Parser *p) {
     int saved_col = p->lexer->column;
     
     // Get next token
-    Token next = lexer_next_token(p->lexer);
+    Token next;
+    lexer_next_token(p->lexer, &next);
     TokenType result = next.type;
     
     // Restore lexer state
@@ -1173,8 +1174,10 @@ static ASTNode *parse_declaration(Parser *p) {
         size_t saved_pos = p->lexer->position;
         int saved_line = p->lexer->line;
         int saved_col = p->lexer->column;
-        Token saved_previous = p->previous;
-        Token saved_current = p->current;
+        Token saved_previous;
+        Token saved_current;
+        token_copy(&saved_previous, &p->previous);
+        token_copy(&saved_current, &p->current);
         
         advance_p(p); // consume '('
         
@@ -1289,8 +1292,8 @@ static ASTNode *parse_declaration(Parser *p) {
         p->lexer->position = saved_pos;
         p->lexer->line = saved_line;
         p->lexer->column = saved_col;
-        p->previous = saved_previous;
-        p->current = saved_current;
+        token_copy(&p->previous, &saved_previous);
+        token_copy(&p->current, &saved_current);
     }
     
     // Handle pointer modifiers: char *p, int **pp, etc.

@@ -13,6 +13,7 @@ static const char *op_name(IROpcode op) {
         case IR_LABEL: return "label";
         case IR_JMP: return "jmp";
         case IR_JMP_IF: return "jmp_if";
+        case IR_JMP_IF_TRUE: return "jmp_if_true";
         case IR_RET: return "ret";
         case IR_RET_VOID: return "ret_void";
         case IR_CALL: return "call";

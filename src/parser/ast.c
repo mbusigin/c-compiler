@@ -347,6 +347,7 @@ Type *type_create(TypeKind kind) {
         case TYPE_LONGDOUBLE: t->size = 16; t->align = 16; break;
         case TYPE_BOOL: t->size = 1; t->align = 1; break;
         case TYPE_POINTER: t->size = 8; t->align = 8; break;
+        case TYPE_ENUM: t->size = 4; t->align = 4; break;
         default: t->size = 0; t->align = 1; break;
     }
     return t;

@@ -54,10 +54,11 @@ int compile_file(const char *filename, CompileOptions *options) {
     
     if (options->dump_tokens) {
         printf("Tokens for %s:\n", filename);
-        Token tok = lexer_next_token(lexer);
+        Token tok;
+        lexer_next_token(lexer, &tok);
         while (tok.type != TOKEN_EOF) {
             token_print(&tok, stdout);
-            tok = lexer_next_token(lexer);
+            lexer_next_token(lexer, &tok);
         }
         token_print(&tok, stdout);
         lexer_destroy(lexer);

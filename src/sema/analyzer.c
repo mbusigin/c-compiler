@@ -161,6 +161,7 @@ static void analyze_declaration(ASTNode *node) {
                           node->line, node->column, node->data.variable.name);
                 } else {
                     sym->is_defined = true;
+                    sym->is_static = node->is_static;
                 }
             }
             if (node->data.variable.init) {
