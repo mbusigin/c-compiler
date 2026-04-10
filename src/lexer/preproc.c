@@ -227,6 +227,36 @@ static char *expand_macros(const char *input) {
     const char *p = input;
     
     while (*p) {
+        // Skip string literals - do NOT expand macros inside them
+        if (*p == '"') {
+            result[result_pos++] = *p++;  // opening quote
+            while (*p && *p != '"') {
+                if (*p == '\\') {
+                    result[result_pos++] = *p++;  // backslash
+                    if (*p) result[result_pos++] = *p++;  // escaped char
+                } else {
+                    result[result_pos++] = *p++;
+                }
+            }
+            if (*p == '"') result[result_pos++] = *p++;  // closing quote
+            continue;
+        }
+        
+        // Skip character constants - do NOT expand macros inside them
+        if (*p == '\'') {
+            result[result_pos++] = *p++;  // opening quote
+            while (*p && *p != '\'') {
+                if (*p == '\\') {
+                    result[result_pos++] = *p++;  // backslash
+                    if (*p) result[result_pos++] = *p++;  // escaped char
+                } else {
+                    result[result_pos++] = *p++;
+                }
+            }
+            if (*p == '\'') result[result_pos++] = *p++;  // closing quote
+            continue;
+        }
+        
         // Check if this is an identifier
         if (*p == '_' || isalpha(*p)) {
             char *id = read_identifier(&p);

@@ -341,7 +341,7 @@ Type *type_create(TypeKind kind) {
         case TYPE_SHORT: t->size = 2; t->align = 2; break;
         case TYPE_INT: t->size = 4; t->align = 4; break;
         case TYPE_LONG: t->size = 8; t->align = 8; break;
-        case TYPE_LONGLONG: t->size = 16; t->align = 8; break;
+        case TYPE_LONGLONG: t->size = 8; t->align = 8; break;
         case TYPE_FLOAT: t->size = 4; t->align = 4; break;
         case TYPE_DOUBLE: t->size = 8; t->align = 8; break;
         case TYPE_LONGDOUBLE: t->size = 16; t->align = 16; break;

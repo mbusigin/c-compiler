@@ -1144,6 +1144,13 @@ static void gen_instr(IRInstruction *instr) {
         case IR_RESTORE_X8_FROM_X20:
             // Restore x8 from x20
             emit_instr("mov\tx8, x20");
+            x8_temp_type = 1;  // x8 now has a value
+            break;
+
+        case IR_RESTORE_X8_FROM_X22:
+            // Restore x8 from x22
+            emit_instr("mov\tx8, x22");
+            x8_temp_type = 1;  // x8 now has a value
             break;
 
         case IR_ADD_X21:
