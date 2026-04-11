@@ -5,44 +5,154 @@
 #include <stdio.h>
 
 const char *ast_node_name(ASTNodeType type) {
-    switch (type) {
-        case AST_TRANSLATION_UNIT: return "TranslationUnit";
-        case AST_FUNCTION_DECL: return "FunctionDecl";
-        case AST_VARIABLE_DECL: return "VariableDecl";
-        case AST_PARAMETER_DECL: return "ParameterDecl";
-        case AST_COMPOUND_STMT: return "CompoundStmt";
-        case AST_IF_STMT: return "IfStmt";
-        case AST_WHILE_STMT: return "WhileStmt";
-        case AST_DO_WHILE_STMT: return "DoWhileStmt";
-        case AST_FOR_STMT: return "ForStmt";
-        case AST_SWITCH_STMT: return "SwitchStmt";
-        case AST_CASE_STMT: return "CaseStmt";
-        case AST_DEFAULT_STMT: return "DefaultStmt";
-        case AST_RETURN_STMT: return "ReturnStmt";
-        case AST_BREAK_STMT: return "BreakStmt";
-        case AST_CONTINUE_STMT: return "ContinueStmt";
-        case AST_GOTO_STMT: return "GotoStmt";
-        case AST_EXPRESSION_STMT: return "ExpressionStmt";
-        case AST_NULL_STMT: return "NullStmt";
-        case AST_BINARY_EXPR: return "BinaryExpr";
-        case AST_UNARY_EXPR: return "UnaryExpr";
-        case AST_CAST_EXPR: return "CastExpr";
-        case AST_CONDITIONAL_EXPR: return "ConditionalExpr";
-        case AST_CALL_EXPR: return "CallExpr";
-        case AST_ARRAY_SUBSCRIPT_EXPR: return "ArraySubscript";
-        case AST_MEMBER_ACCESS_EXPR: return "MemberAccess";
-        case AST_POINTER_MEMBER_ACCESS_EXPR: return "PointerMemberAccess";
-        case AST_IDENTIFIER_EXPR: return "Identifier";
-        case AST_INTEGER_LITERAL_EXPR: return "IntegerLiteral";
-        case AST_FLOAT_LITERAL_EXPR: return "FloatLiteral";
-        case AST_STRING_LITERAL_EXPR: return "StringLiteral";
-        case AST_ASSIGNMENT_EXPR: return "Assignment";
-        case AST_COMMA_EXPR: return "CommaExpr";
-        case AST_SIZEOF_EXPR: return "SizeofExpr";
-        case AST_TYPEDEF_DECL: return "TypedefDecl";
-        case AST_ENUM_DECL: return "EnumDecl";
-        case AST_INITIALIZER_LIST: return "InitializerList";
-        default: return "Unknown";
+    if (type == AST_TRANSLATION_UNIT) {
+
+        return "TranslationUnit";
+
+    } else if (type == AST_FUNCTION_DECL) {
+
+        return "FunctionDecl";
+
+    } else if (type == AST_VARIABLE_DECL) {
+
+        return "VariableDecl";
+
+    } else if (type == AST_PARAMETER_DECL) {
+
+        return "ParameterDecl";
+
+    } else if (type == AST_COMPOUND_STMT) {
+
+        return "CompoundStmt";
+
+    } else if (type == AST_IF_STMT) {
+
+        return "IfStmt";
+
+    } else if (type == AST_WHILE_STMT) {
+
+        return "WhileStmt";
+
+    } else if (type == AST_DO_WHILE_STMT) {
+
+        return "DoWhileStmt";
+
+    } else if (type == AST_FOR_STMT) {
+
+        return "ForStmt";
+
+    } else if (type == AST_SWITCH_STMT) {
+
+        return "SwitchStmt";
+
+    } else if (type == AST_CASE_STMT) {
+
+        return "CaseStmt";
+
+    } else if (type == AST_DEFAULT_STMT) {
+
+        return "DefaultStmt";
+
+    } else if (type == AST_RETURN_STMT) {
+
+        return "ReturnStmt";
+
+    } else if (type == AST_BREAK_STMT) {
+
+        return "BreakStmt";
+
+    } else if (type == AST_CONTINUE_STMT) {
+
+        return "ContinueStmt";
+
+    } else if (type == AST_GOTO_STMT) {
+
+        return "GotoStmt";
+
+    } else if (type == AST_EXPRESSION_STMT) {
+
+        return "ExpressionStmt";
+
+    } else if (type == AST_NULL_STMT) {
+
+        return "NullStmt";
+
+    } else if (type == AST_BINARY_EXPR) {
+
+        return "BinaryExpr";
+
+    } else if (type == AST_UNARY_EXPR) {
+
+        return "UnaryExpr";
+
+    } else if (type == AST_CAST_EXPR) {
+
+        return "CastExpr";
+
+    } else if (type == AST_CONDITIONAL_EXPR) {
+
+        return "ConditionalExpr";
+
+    } else if (type == AST_CALL_EXPR) {
+
+        return "CallExpr";
+
+    } else if (type == AST_ARRAY_SUBSCRIPT_EXPR) {
+
+        return "ArraySubscript";
+
+    } else if (type == AST_MEMBER_ACCESS_EXPR) {
+
+        return "MemberAccess";
+
+    } else if (type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+
+        return "PointerMemberAccess";
+
+    } else if (type == AST_IDENTIFIER_EXPR) {
+
+        return "Identifier";
+
+    } else if (type == AST_INTEGER_LITERAL_EXPR) {
+
+        return "IntegerLiteral";
+
+    } else if (type == AST_FLOAT_LITERAL_EXPR) {
+
+        return "FloatLiteral";
+
+    } else if (type == AST_STRING_LITERAL_EXPR) {
+
+        return "StringLiteral";
+
+    } else if (type == AST_ASSIGNMENT_EXPR) {
+
+        return "Assignment";
+
+    } else if (type == AST_COMMA_EXPR) {
+
+        return "CommaExpr";
+
+    } else if (type == AST_SIZEOF_EXPR) {
+
+        return "SizeofExpr";
+
+    } else if (type == AST_TYPEDEF_DECL) {
+
+        return "TypedefDecl";
+
+    } else if (type == AST_ENUM_DECL) {
+
+        return "EnumDecl";
+
+    } else if (type == AST_INITIALIZER_LIST) {
+
+        return "InitializerList";
+
+    } else {
+
+        return "Unknown";
+
     }
 }
 
@@ -55,122 +165,182 @@ ASTNode *ast_create(ASTNodeType type) {
 void ast_free(ASTNode *node) {
     if (!node) return;
     
-    switch (node->type) {
-        case AST_TRANSLATION_UNIT:
-            if (node->data.unit.declarations) {
-                for (size_t i = 0; i < list_size(node->data.unit.declarations); i++)
-                    ast_free(list_get(node->data.unit.declarations, i));
-                list_destroy(node->data.unit.declarations);
-            }
-            break;
-        case AST_FUNCTION_DECL:
-            free(node->data.function.name);
-            if (node->data.function.func_type) type_free(node->data.function.func_type);
-            if (node->data.function.params) {
-                for (size_t i = 0; i < list_size(node->data.function.params); i++)
-                    ast_free(list_get(node->data.function.params, i));
-                list_destroy(node->data.function.params);
-            }
-            if (node->data.function.body) ast_free(node->data.function.body);
-            break;
-        case AST_VARIABLE_DECL:
-            free(node->data.variable.name);
-            if (node->data.variable.var_type) type_free(node->data.variable.var_type);
-            if (node->data.variable.init) ast_free(node->data.variable.init);
-            break;
-        case AST_PARAMETER_DECL:
-            free(node->data.parameter.name);
-            if (node->data.parameter.param_type) type_free(node->data.parameter.param_type);
-            break;
-        case AST_IF_STMT:
-            if (node->data.if_stmt.condition) ast_free(node->data.if_stmt.condition);
-            if (node->data.if_stmt.then_stmt) ast_free(node->data.if_stmt.then_stmt);
-            if (node->data.if_stmt.else_stmt) ast_free(node->data.if_stmt.else_stmt);
-            break;
-        case AST_WHILE_STMT:
-        case AST_DO_WHILE_STMT:
-            if (node->data.while_stmt.condition) ast_free(node->data.while_stmt.condition);
-            if (node->data.while_stmt.body) ast_free(node->data.while_stmt.body);
-            break;
-        case AST_FOR_STMT:
-            if (node->data.for_stmt.init) ast_free(node->data.for_stmt.init);
-            if (node->data.for_stmt.condition) ast_free(node->data.for_stmt.condition);
-            if (node->data.for_stmt.increment) ast_free(node->data.for_stmt.increment);
-            if (node->data.for_stmt.body) ast_free(node->data.for_stmt.body);
-            break;
-        case AST_SWITCH_STMT:
-            if (node->data.switch_stmt.expr) ast_free(node->data.switch_stmt.expr);
-            if (node->data.switch_stmt.body) ast_free(node->data.switch_stmt.body);
-            break;
-        case AST_RETURN_STMT:
-            if (node->data.return_stmt.expr) ast_free(node->data.return_stmt.expr);
-            break;
-        case AST_GOTO_STMT:
-            free(node->data.goto_stmt.label);
-            break;
-        case AST_COMPOUND_STMT:
-            if (node->data.compound.stmts) {
-                for (size_t i = 0; i < list_size(node->data.compound.stmts); i++)
-                    ast_free(list_get(node->data.compound.stmts, i));
-                list_destroy(node->data.compound.stmts);
-            }
-            break;
-        case AST_EXPRESSION_STMT:
-            if (node->data.expr_stmt.expr) ast_free(node->data.expr_stmt.expr);
-            break;
-        case AST_BINARY_EXPR:
-            if (node->data.binary.left) ast_free(node->data.binary.left);
-            if (node->data.binary.right) ast_free(node->data.binary.right);
-            break;
-        case AST_UNARY_EXPR:
-            if (node->data.unary.operand) ast_free(node->data.unary.operand);
-            break;
-        case AST_CAST_EXPR:
-            if (node->data.cast.cast_type) type_free(node->data.cast.cast_type);
-            if (node->data.cast.operand) ast_free(node->data.cast.operand);
-            break;
-        case AST_CONDITIONAL_EXPR:
-            if (node->data.conditional.condition) ast_free(node->data.conditional.condition);
-            if (node->data.conditional.then_expr) ast_free(node->data.conditional.then_expr);
-            if (node->data.conditional.else_expr) ast_free(node->data.conditional.else_expr);
-            break;
-        case AST_ASSIGNMENT_EXPR:
-            if (node->data.assignment.left) ast_free(node->data.assignment.left);
-            if (node->data.assignment.right) ast_free(node->data.assignment.right);
-            break;
-        case AST_COMMA_EXPR:
-            if (node->data.comma.left) ast_free(node->data.comma.left);
-            if (node->data.comma.right) ast_free(node->data.comma.right);
-            break;
-        case AST_CALL_EXPR:
-            if (node->data.call.callee) ast_free(node->data.call.callee);
-            if (node->data.call.args) {
-                for (size_t i = 0; i < list_size(node->data.call.args); i++)
-                    ast_free(list_get(node->data.call.args, i));
-                list_destroy(node->data.call.args);
-            }
-            break;
-        case AST_ARRAY_SUBSCRIPT_EXPR:
-            if (node->data.subscript.array) ast_free(node->data.subscript.array);
-            if (node->data.subscript.index) ast_free(node->data.subscript.index);
-            break;
-        case AST_MEMBER_ACCESS_EXPR:
-        case AST_POINTER_MEMBER_ACCESS_EXPR:
-            if (node->data.member.expr) ast_free(node->data.member.expr);
-            free(node->data.member.member);
-            break;
-        case AST_IDENTIFIER_EXPR:
-            free(node->data.identifier.name);
-            break;
-        case AST_STRING_LITERAL_EXPR:
-            free(node->data.string_literal.value);
-            break;
-        case AST_SIZEOF_EXPR:
-            if (node->data.sizeof_expr.sizeof_type) type_free(node->data.sizeof_expr.sizeof_type);
-            if (node->data.sizeof_expr.sizeof_expr) ast_free(node->data.sizeof_expr.sizeof_expr);
-            break;
-        default:
-            break;
+    if (node->type == AST_TRANSLATION_UNIT) {
+
+        if (node->data.unit.declarations) {
+
+        for (size_t i = 0; i < list_size(node->data.unit.declarations); i++)
+
+        ast_free(list_get(node->data.unit.declarations, i));
+
+        list_destroy(node->data.unit.declarations);
+
+        }
+
+    } else if (node->type == AST_FUNCTION_DECL) {
+
+        free(node->data.function.name);
+
+        if (node->data.function.func_type) type_free(node->data.function.func_type);
+
+        if (node->data.function.params) {
+
+        for (size_t i = 0; i < list_size(node->data.function.params); i++)
+
+        ast_free(list_get(node->data.function.params, i));
+
+        list_destroy(node->data.function.params);
+
+        }
+
+        if (node->data.function.body) ast_free(node->data.function.body);
+
+    } else if (node->type == AST_VARIABLE_DECL) {
+
+        free(node->data.variable.name);
+
+        if (node->data.variable.var_type) type_free(node->data.variable.var_type);
+
+        if (node->data.variable.init) ast_free(node->data.variable.init);
+
+    } else if (node->type == AST_PARAMETER_DECL) {
+
+        free(node->data.parameter.name);
+
+        if (node->data.parameter.param_type) type_free(node->data.parameter.param_type);
+
+    } else if (node->type == AST_IF_STMT) {
+
+        if (node->data.if_stmt.condition) ast_free(node->data.if_stmt.condition);
+
+        if (node->data.if_stmt.then_stmt) ast_free(node->data.if_stmt.then_stmt);
+
+        if (node->data.if_stmt.else_stmt) ast_free(node->data.if_stmt.else_stmt);
+
+    } else if (node->type == AST_WHILE_STMT || node->type == AST_DO_WHILE_STMT) {
+
+        if (node->data.while_stmt.condition) ast_free(node->data.while_stmt.condition);
+
+        if (node->data.while_stmt.body) ast_free(node->data.while_stmt.body);
+
+    } else if (node->type == AST_FOR_STMT) {
+
+        if (node->data.for_stmt.init) ast_free(node->data.for_stmt.init);
+
+        if (node->data.for_stmt.condition) ast_free(node->data.for_stmt.condition);
+
+        if (node->data.for_stmt.increment) ast_free(node->data.for_stmt.increment);
+
+        if (node->data.for_stmt.body) ast_free(node->data.for_stmt.body);
+
+    } else if (node->type == AST_SWITCH_STMT) {
+
+        if (node->data.switch_stmt.expr) ast_free(node->data.switch_stmt.expr);
+
+        if (node->data.switch_stmt.body) ast_free(node->data.switch_stmt.body);
+
+    } else if (node->type == AST_RETURN_STMT) {
+
+        if (node->data.return_stmt.expr) ast_free(node->data.return_stmt.expr);
+
+    } else if (node->type == AST_GOTO_STMT) {
+
+        free(node->data.goto_stmt.label);
+
+    } else if (node->type == AST_COMPOUND_STMT) {
+
+        if (node->data.compound.stmts) {
+
+        for (size_t i = 0; i < list_size(node->data.compound.stmts); i++)
+
+        ast_free(list_get(node->data.compound.stmts, i));
+
+        list_destroy(node->data.compound.stmts);
+
+        }
+
+    } else if (node->type == AST_EXPRESSION_STMT) {
+
+        if (node->data.expr_stmt.expr) ast_free(node->data.expr_stmt.expr);
+
+    } else if (node->type == AST_BINARY_EXPR) {
+
+        if (node->data.binary.left) ast_free(node->data.binary.left);
+
+        if (node->data.binary.right) ast_free(node->data.binary.right);
+
+    } else if (node->type == AST_UNARY_EXPR) {
+
+        if (node->data.unary.operand) ast_free(node->data.unary.operand);
+
+    } else if (node->type == AST_CAST_EXPR) {
+
+        if (node->data.cast.cast_type) type_free(node->data.cast.cast_type);
+
+        if (node->data.cast.operand) ast_free(node->data.cast.operand);
+
+    } else if (node->type == AST_CONDITIONAL_EXPR) {
+
+        if (node->data.conditional.condition) ast_free(node->data.conditional.condition);
+
+        if (node->data.conditional.then_expr) ast_free(node->data.conditional.then_expr);
+
+        if (node->data.conditional.else_expr) ast_free(node->data.conditional.else_expr);
+
+    } else if (node->type == AST_ASSIGNMENT_EXPR) {
+
+        if (node->data.assignment.left) ast_free(node->data.assignment.left);
+
+        if (node->data.assignment.right) ast_free(node->data.assignment.right);
+
+    } else if (node->type == AST_COMMA_EXPR) {
+
+        if (node->data.comma.left) ast_free(node->data.comma.left);
+
+        if (node->data.comma.right) ast_free(node->data.comma.right);
+
+    } else if (node->type == AST_CALL_EXPR) {
+
+        if (node->data.call.callee) ast_free(node->data.call.callee);
+
+        if (node->data.call.args) {
+
+        for (size_t i = 0; i < list_size(node->data.call.args); i++)
+
+        ast_free(list_get(node->data.call.args, i));
+
+        list_destroy(node->data.call.args);
+
+        }
+
+    } else if (node->type == AST_ARRAY_SUBSCRIPT_EXPR) {
+
+        if (node->data.subscript.array) ast_free(node->data.subscript.array);
+
+        if (node->data.subscript.index) ast_free(node->data.subscript.index);
+
+    } else if (node->type == AST_MEMBER_ACCESS_EXPR || node->type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+
+        if (node->data.member.expr) ast_free(node->data.member.expr);
+
+        free(node->data.member.member);
+
+    } else if (node->type == AST_IDENTIFIER_EXPR) {
+
+        free(node->data.identifier.name);
+
+    } else if (node->type == AST_STRING_LITERAL_EXPR) {
+
+        free(node->data.string_literal.value);
+
+    } else if (node->type == AST_SIZEOF_EXPR) {
+
+        if (node->data.sizeof_expr.sizeof_type) type_free(node->data.sizeof_expr.sizeof_type);
+
+        if (node->data.sizeof_expr.sizeof_expr) ast_free(node->data.sizeof_expr.sizeof_expr);
+
+    } else {
+
     }
     
     // Note: Don't free type_info - it's a borrowed reference to types owned elsewhere
@@ -188,120 +358,165 @@ static void print_ast_recursive(const ASTNode *node, int indent) {
     print_indent(indent);
     printf("%s", ast_node_name(node->type));
     
-    switch (node->type) {
-        case AST_FUNCTION_DECL:
-            printf(" name='%s'", node->data.function.name ? node->data.function.name : "(anon)");
-            break;
-        case AST_VARIABLE_DECL:
-            printf(" name='%s'", node->data.variable.name ? node->data.variable.name : "(anon)");
-            break;
-        case AST_PARAMETER_DECL:
-            printf(" name='%s'", node->data.parameter.name ? node->data.parameter.name : "(anon)");
-            break;
-        case AST_IDENTIFIER_EXPR:
-            printf(" name='%s'", node->data.identifier.name);
-            break;
-        case AST_INTEGER_LITERAL_EXPR:
-            printf(" value=%lld", node->data.int_literal.value);
-            break;
-        case AST_FLOAT_LITERAL_EXPR:
-            printf(" value=%f", node->data.float_literal.value);
-            break;
-        case AST_STRING_LITERAL_EXPR:
-            printf(" value=\"%s\"", node->data.string_literal.value);
-            break;
-        case AST_BINARY_EXPR:
-            printf(" op=%d", node->data.binary.op);
-            break;
-        case AST_UNARY_EXPR:
-            printf(" op=%d", node->data.unary.op);
-            break;
-        case AST_ASSIGNMENT_EXPR:
-            printf(" op=%d", node->data.assignment.op);
-            break;
-        case AST_GOTO_STMT:
-            printf(" label='%s'", node->data.goto_stmt.label);
-            break;
-        default:
-            break;
+    if (node->type == AST_FUNCTION_DECL) {
+
+        printf(" name='%s'", node->data.function.name ? node->data.function.name : "(anon)");
+
+    } else if (node->type == AST_VARIABLE_DECL) {
+
+        printf(" name='%s'", node->data.variable.name ? node->data.variable.name : "(anon)");
+
+    } else if (node->type == AST_PARAMETER_DECL) {
+
+        printf(" name='%s'", node->data.parameter.name ? node->data.parameter.name : "(anon)");
+
+    } else if (node->type == AST_IDENTIFIER_EXPR) {
+
+        printf(" name='%s'", node->data.identifier.name);
+
+    } else if (node->type == AST_INTEGER_LITERAL_EXPR) {
+
+        printf(" value=%lld", node->data.int_literal.value);
+
+    } else if (node->type == AST_FLOAT_LITERAL_EXPR) {
+
+        printf(" value=%f", node->data.float_literal.value);
+
+    } else if (node->type == AST_STRING_LITERAL_EXPR) {
+
+        printf(" value=\"%s\"", node->data.string_literal.value);
+
+    } else if (node->type == AST_BINARY_EXPR) {
+
+        printf(" op=%d", node->data.binary.op);
+
+    } else if (node->type == AST_UNARY_EXPR) {
+
+        printf(" op=%d", node->data.unary.op);
+
+    } else if (node->type == AST_ASSIGNMENT_EXPR) {
+
+        printf(" op=%d", node->data.assignment.op);
+
+    } else if (node->type == AST_GOTO_STMT) {
+
+        printf(" label='%s'", node->data.goto_stmt.label);
+
+    } else {
+
     }
     printf("\n");
     
-    switch (node->type) {
-        case AST_FUNCTION_DECL:
-            if (node->data.function.params) {
-                for (size_t i = 0; i < list_size(node->data.function.params); i++)
-                    print_ast_recursive(list_get(node->data.function.params, i), indent + 1);
-            }
-            if (node->data.function.body)
-                print_ast_recursive(node->data.function.body, indent + 1);
-            break;
-        case AST_IF_STMT:
-            print_ast_recursive(node->data.if_stmt.condition, indent + 1);
-            print_ast_recursive(node->data.if_stmt.then_stmt, indent + 1);
-            if (node->data.if_stmt.else_stmt)
-                print_ast_recursive(node->data.if_stmt.else_stmt, indent + 1);
-            break;
-        case AST_WHILE_STMT:
-        case AST_DO_WHILE_STMT:
-            print_ast_recursive(node->data.while_stmt.condition, indent + 1);
-            print_ast_recursive(node->data.while_stmt.body, indent + 1);
-            break;
-        case AST_FOR_STMT:
-            print_ast_recursive(node->data.for_stmt.init, indent + 1);
-            print_ast_recursive(node->data.for_stmt.condition, indent + 1);
-            print_ast_recursive(node->data.for_stmt.increment, indent + 1);
-            print_ast_recursive(node->data.for_stmt.body, indent + 1);
-            break;
-        case AST_COMPOUND_STMT:
-            if (node->data.compound.stmts) {
-                for (size_t i = 0; i < list_size(node->data.compound.stmts); i++)
-                    print_ast_recursive(list_get(node->data.compound.stmts, i), indent + 1);
-            }
-            break;
-        case AST_RETURN_STMT:
-        case AST_EXPRESSION_STMT:
-            print_ast_recursive(node->data.return_stmt.expr, indent + 1);
-            break;
-        case AST_BINARY_EXPR:
-        case AST_ASSIGNMENT_EXPR:
-        case AST_COMMA_EXPR:
-            print_ast_recursive(node->data.binary.left, indent + 1);
-            print_ast_recursive(node->data.binary.right, indent + 1);
-            break;
-        case AST_UNARY_EXPR:
-            print_ast_recursive(node->data.unary.operand, indent + 1);
-            break;
-        case AST_CALL_EXPR:
-            print_ast_recursive(node->data.call.callee, indent + 1);
-            if (node->data.call.args) {
-                for (size_t i = 0; i < list_size(node->data.call.args); i++)
-                    print_ast_recursive(list_get(node->data.call.args, i), indent + 1);
-            }
-            break;
-        case AST_ARRAY_SUBSCRIPT_EXPR:
-            print_ast_recursive(node->data.subscript.array, indent + 1);
-            print_ast_recursive(node->data.subscript.index, indent + 1);
-            break;
-        case AST_MEMBER_ACCESS_EXPR:
-        case AST_POINTER_MEMBER_ACCESS_EXPR:
-            print_ast_recursive(node->data.member.expr, indent + 1);
-            // Print member name on same line with indent
-            for (int i = 0; i <= indent; i++) printf("  ");
-            printf("member='%s'\n", node->data.member.member ? node->data.member.member : "?");
-            break;
-        case AST_VARIABLE_DECL:
-            if (node->data.variable.init)
-                print_ast_recursive(node->data.variable.init, indent + 1);
-            break;
-        case AST_INITIALIZER_LIST:
-            if (node->data.init_list.elements) {
-                for (size_t i = 0; i < list_size(node->data.init_list.elements); i++)
-                    print_ast_recursive(list_get(node->data.init_list.elements, i), indent + 1);
-            }
-            break;
-        default:
-            break;
+    if (node->type == AST_FUNCTION_DECL) {
+
+        if (node->data.function.params) {
+
+        for (size_t i = 0; i < list_size(node->data.function.params); i++)
+
+        print_ast_recursive(list_get(node->data.function.params, i), indent + 1);
+
+        }
+
+        if (node->data.function.body)
+
+        print_ast_recursive(node->data.function.body, indent + 1);
+
+    } else if (node->type == AST_IF_STMT) {
+
+        print_ast_recursive(node->data.if_stmt.condition, indent + 1);
+
+        print_ast_recursive(node->data.if_stmt.then_stmt, indent + 1);
+
+        if (node->data.if_stmt.else_stmt)
+
+        print_ast_recursive(node->data.if_stmt.else_stmt, indent + 1);
+
+    } else if (node->type == AST_WHILE_STMT || node->type == AST_DO_WHILE_STMT) {
+
+        print_ast_recursive(node->data.while_stmt.condition, indent + 1);
+
+        print_ast_recursive(node->data.while_stmt.body, indent + 1);
+
+    } else if (node->type == AST_FOR_STMT) {
+
+        print_ast_recursive(node->data.for_stmt.init, indent + 1);
+
+        print_ast_recursive(node->data.for_stmt.condition, indent + 1);
+
+        print_ast_recursive(node->data.for_stmt.increment, indent + 1);
+
+        print_ast_recursive(node->data.for_stmt.body, indent + 1);
+
+    } else if (node->type == AST_COMPOUND_STMT) {
+
+        if (node->data.compound.stmts) {
+
+        for (size_t i = 0; i < list_size(node->data.compound.stmts); i++)
+
+        print_ast_recursive(list_get(node->data.compound.stmts, i), indent + 1);
+
+        }
+
+    } else if (node->type == AST_RETURN_STMT || node->type == AST_EXPRESSION_STMT) {
+
+        print_ast_recursive(node->data.return_stmt.expr, indent + 1);
+
+    } else if (node->type == AST_BINARY_EXPR || node->type == AST_ASSIGNMENT_EXPR || node->type == AST_COMMA_EXPR) {
+
+        print_ast_recursive(node->data.binary.left, indent + 1);
+
+        print_ast_recursive(node->data.binary.right, indent + 1);
+
+    } else if (node->type == AST_UNARY_EXPR) {
+
+        print_ast_recursive(node->data.unary.operand, indent + 1);
+
+    } else if (node->type == AST_CALL_EXPR) {
+
+        print_ast_recursive(node->data.call.callee, indent + 1);
+
+        if (node->data.call.args) {
+
+        for (size_t i = 0; i < list_size(node->data.call.args); i++)
+
+        print_ast_recursive(list_get(node->data.call.args, i), indent + 1);
+
+        }
+
+    } else if (node->type == AST_ARRAY_SUBSCRIPT_EXPR) {
+
+        print_ast_recursive(node->data.subscript.array, indent + 1);
+
+        print_ast_recursive(node->data.subscript.index, indent + 1);
+
+    } else if (node->type == AST_MEMBER_ACCESS_EXPR || node->type == AST_POINTER_MEMBER_ACCESS_EXPR) {
+
+        print_ast_recursive(node->data.member.expr, indent + 1);
+
+        // Print member name on same line with indent
+
+        for (int i = 0; i <= indent; i++) printf("  ");
+
+        printf("member='%s'\n", node->data.member.member ? node->data.member.member : "?");
+
+    } else if (node->type == AST_VARIABLE_DECL) {
+
+        if (node->data.variable.init)
+
+        print_ast_recursive(node->data.variable.init, indent + 1);
+
+    } else if (node->type == AST_INITIALIZER_LIST) {
+
+        if (node->data.init_list.elements) {
+
+        for (size_t i = 0; i < list_size(node->data.init_list.elements); i++)
+
+        print_ast_recursive(list_get(node->data.init_list.elements, i), indent + 1);
+
+        }
+
+    } else {
+
     }
 }
 
@@ -310,45 +525,123 @@ void ast_print(const ASTNode *node, int indent) {
 }
 
 const char *type_kind_name(TypeKind kind) {
-    switch (kind) {
-        case TYPE_VOID: return "void";
-        case TYPE_CHAR: return "char";
-        case TYPE_SHORT: return "short";
-        case TYPE_INT: return "int";
-        case TYPE_LONG: return "long";
-        case TYPE_LONGLONG: return "long long";
-        case TYPE_FLOAT: return "float";
-        case TYPE_DOUBLE: return "double";
-        case TYPE_LONGDOUBLE: return "long double";
-        case TYPE_BOOL: return "_Bool";
-        case TYPE_POINTER: return "pointer";
-        case TYPE_ARRAY: return "array";
-        case TYPE_FUNCTION: return "function";
-        case TYPE_STRUCT: return "struct";
-        case TYPE_UNION: return "union";
-        case TYPE_ENUM: return "enum";
-        case TYPE_TYPEDEF: return "typedef";
-        default: return "unknown";
+    if (kind == TYPE_VOID) {
+
+        return "void";
+
+    } else if (kind == TYPE_CHAR) {
+
+        return "char";
+
+    } else if (kind == TYPE_SHORT) {
+
+        return "short";
+
+    } else if (kind == TYPE_INT) {
+
+        return "int";
+
+    } else if (kind == TYPE_LONG) {
+
+        return "long";
+
+    } else if (kind == TYPE_LONGLONG) {
+
+        return "long long";
+
+    } else if (kind == TYPE_FLOAT) {
+
+        return "float";
+
+    } else if (kind == TYPE_DOUBLE) {
+
+        return "double";
+
+    } else if (kind == TYPE_LONGDOUBLE) {
+
+        return "long double";
+
+    } else if (kind == TYPE_BOOL) {
+
+        return "_Bool";
+
+    } else if (kind == TYPE_POINTER) {
+
+        return "pointer";
+
+    } else if (kind == TYPE_ARRAY) {
+
+        return "array";
+
+    } else if (kind == TYPE_FUNCTION) {
+
+        return "function";
+
+    } else if (kind == TYPE_STRUCT) {
+
+        return "struct";
+
+    } else if (kind == TYPE_UNION) {
+
+        return "union";
+
+    } else if (kind == TYPE_ENUM) {
+
+        return "enum";
+
+    } else if (kind == TYPE_TYPEDEF) {
+
+        return "typedef";
+
+    } else {
+
+        return "unknown";
+
     }
 }
 
 Type *type_create(TypeKind kind) {
     Type *t = xcalloc(1, sizeof(Type));
     t->kind = kind;
-    switch (kind) {
-        case TYPE_VOID: t->size = 0; break;
-        case TYPE_CHAR: t->size = 1; t->align = 1; break;
-        case TYPE_SHORT: t->size = 2; t->align = 2; break;
-        case TYPE_INT: t->size = 4; t->align = 4; break;
-        case TYPE_LONG: t->size = 8; t->align = 8; break;
-        case TYPE_LONGLONG: t->size = 8; t->align = 8; break;
-        case TYPE_FLOAT: t->size = 4; t->align = 4; break;
-        case TYPE_DOUBLE: t->size = 8; t->align = 8; break;
-        case TYPE_LONGDOUBLE: t->size = 16; t->align = 16; break;
-        case TYPE_BOOL: t->size = 1; t->align = 1; break;
-        case TYPE_POINTER: t->size = 8; t->align = 8; break;
-        case TYPE_ENUM: t->size = 4; t->align = 4; break;
-        default: t->size = 0; t->align = 1; break;
+    if (kind == TYPE_VOID) {
+
+        t->size = 0;
+    } else if (kind == TYPE_CHAR) {
+
+        t->size = 1; t->align = 1;
+    } else if (kind == TYPE_SHORT) {
+
+        t->size = 2; t->align = 2;
+    } else if (kind == TYPE_INT) {
+
+        t->size = 4; t->align = 4;
+    } else if (kind == TYPE_LONG) {
+
+        t->size = 8; t->align = 8;
+    } else if (kind == TYPE_LONGLONG) {
+
+        t->size = 8; t->align = 8;
+    } else if (kind == TYPE_FLOAT) {
+
+        t->size = 4; t->align = 4;
+    } else if (kind == TYPE_DOUBLE) {
+
+        t->size = 8; t->align = 8;
+    } else if (kind == TYPE_LONGDOUBLE) {
+
+        t->size = 16; t->align = 16;
+    } else if (kind == TYPE_BOOL) {
+
+        t->size = 1; t->align = 1;
+    } else if (kind == TYPE_POINTER) {
+
+        t->size = 8; t->align = 8;
+    } else if (kind == TYPE_ENUM) {
+
+        t->size = 4; t->align = 4;
+    } else {
+
+        t->size = 0; t->align = 1;
     }
     return t;
 }

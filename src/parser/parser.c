@@ -1743,43 +1743,39 @@ static ASTNode *parse_conditional_expr(Parser *p) {
 }
 
 static int prec(TokenType t) {
-    switch (t) {
-        case TOKEN_PIPE_PIPE: return 4;
-        case TOKEN_AMP_AMP: return 5;
-        case TOKEN_PIPE: return 6;
-        case TOKEN_CARET: return 7;
-        case TOKEN_AMPERSAND: return 8;
-        case TOKEN_EQ_EQ: case TOKEN_EXCLAIM_EQ: return 9;
-        case TOKEN_LESS: case TOKEN_GREATER: case TOKEN_LESS_EQ: case TOKEN_GREATER_EQ: return 10;
-        case TOKEN_LSHIFT: case TOKEN_RSHIFT: return 11;
-        case TOKEN_PLUS: case TOKEN_MINUS: return 12;
-        case TOKEN_STAR: case TOKEN_SLASH: case TOKEN_PERCENT: return 13;
-        default: return -1;
-    }
+    if (t == TOKEN_PIPE_PIPE) return 4;
+    if (t == TOKEN_AMP_AMP) return 5;
+    if (t == TOKEN_PIPE) return 6;
+    if (t == TOKEN_CARET) return 7;
+    if (t == TOKEN_AMPERSAND) return 8;
+    if (t == TOKEN_EQ_EQ || t == TOKEN_EXCLAIM_EQ) return 9;
+    if (t == TOKEN_LESS || t == TOKEN_GREATER || t == TOKEN_LESS_EQ || t == TOKEN_GREATER_EQ) return 10;
+    if (t == TOKEN_LSHIFT || t == TOKEN_RSHIFT) return 11;
+    if (t == TOKEN_PLUS || t == TOKEN_MINUS) return 12;
+    if (t == TOKEN_STAR || t == TOKEN_SLASH || t == TOKEN_PERCENT) return 13;
+    return -1;
 }
 
 static BinaryOp binop(TokenType t) {
-    switch (t) {
-        case TOKEN_PLUS: return OP_ADD;
-        case TOKEN_MINUS: return OP_SUB;
-        case TOKEN_STAR: return OP_MUL;
-        case TOKEN_SLASH: return OP_DIV;
-        case TOKEN_PERCENT: return OP_MOD;
-        case TOKEN_LSHIFT: return OP_LSHIFT;
-        case TOKEN_RSHIFT: return OP_RSHIFT;
-        case TOKEN_LESS: return OP_LT;
-        case TOKEN_GREATER: return OP_GT;
-        case TOKEN_LESS_EQ: return OP_LE;
-        case TOKEN_GREATER_EQ: return OP_GE;
-        case TOKEN_EQ_EQ: return OP_EQ;
-        case TOKEN_EXCLAIM_EQ: return OP_NE;
-        case TOKEN_AMPERSAND: return OP_BITAND;
-        case TOKEN_CARET: return OP_BITXOR;
-        case TOKEN_PIPE: return OP_BITOR;
-        case TOKEN_AMP_AMP: return OP_AND;
-        case TOKEN_PIPE_PIPE: return OP_OR;
-        default: return 0;
-    }
+    if (t == TOKEN_PLUS) return OP_ADD;
+    if (t == TOKEN_MINUS) return OP_SUB;
+    if (t == TOKEN_STAR) return OP_MUL;
+    if (t == TOKEN_SLASH) return OP_DIV;
+    if (t == TOKEN_PERCENT) return OP_MOD;
+    if (t == TOKEN_LSHIFT) return OP_LSHIFT;
+    if (t == TOKEN_RSHIFT) return OP_RSHIFT;
+    if (t == TOKEN_LESS) return OP_LT;
+    if (t == TOKEN_GREATER) return OP_GT;
+    if (t == TOKEN_LESS_EQ) return OP_LE;
+    if (t == TOKEN_GREATER_EQ) return OP_GE;
+    if (t == TOKEN_EQ_EQ) return OP_EQ;
+    if (t == TOKEN_EXCLAIM_EQ) return OP_NE;
+    if (t == TOKEN_AMPERSAND) return OP_BITAND;
+    if (t == TOKEN_CARET) return OP_BITXOR;
+    if (t == TOKEN_PIPE) return OP_BITOR;
+    if (t == TOKEN_AMP_AMP) return OP_AND;
+    if (t == TOKEN_PIPE_PIPE) return OP_OR;
+    return 0;
 }
 
 static ASTNode *parse_binary_expr(Parser *p, int min_prec) {

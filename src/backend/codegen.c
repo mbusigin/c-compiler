@@ -198,7 +198,8 @@ static void emit_immediate(int reg, long long value) {
         emit_instr("mov\tx%d, #%lld", reg, value);
     } else if (value >= -65535 && value < 0) {
         // Negative small immediate - use movn
-        emit_instr("movn\tx%d, #%lld", reg, -value);
+        // movn xN, #imm produces ~(imm), so to get value V we need imm = ~V = -V - 1
+        emit_instr("movn\tx%d, #%lld", reg, -value - 1);
     } else {
         // Large immediate - use movz + movk
         // Decompose into 16-bit chunks

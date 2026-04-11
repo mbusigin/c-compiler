@@ -8,76 +8,282 @@
 #include <stdio.h>
 
 static const char *op_name(IROpcode op) {
-    switch (op) {
-        case IR_NOP: return "nop";
-        case IR_LABEL: return "label";
-        case IR_JMP: return "jmp";
-        case IR_JMP_IF: return "jmp_if";
-        case IR_JMP_IF_TRUE: return "jmp_if_true";
-        case IR_RET: return "ret";
-        case IR_RET_VOID: return "ret_void";
-        case IR_CALL: return "call";
-        case IR_CALL_INDIRECT: return "call_indirect";
-        case IR_LOAD: return "load";
-        case IR_STORE: return "store";
-        case IR_ALLOCA: return "alloca";
-        case IR_ADD: return "add";
-        case IR_ADD_F: return "add_f";
-        case IR_SUB: return "sub";
-        case IR_SUB_F: return "sub_f";
-        case IR_MUL: return "mul";
-        case IR_MUL_F: return "mul_f";
-        case IR_DIV: return "div";
-        case IR_DIV_F: return "div_f";
-        case IR_MOD: return "mod";
-        case IR_NEG: return "neg";
-        case IR_NEG_F: return "neg_f";
-        case IR_AND: return "and";
-        case IR_OR: return "or";
-        case IR_XOR: return "xor";
-        case IR_SHL: return "shl";
-        case IR_SHR: return "shr";
-        case IR_NOT: return "not";
-        case IR_CMP: return "cmp";
-        case IR_CMP_F: return "cmp_f";
-        case IR_CMP_LT: return "cmp_lt";
-        case IR_CMP_GT: return "cmp_gt";
-        case IR_CMP_LE: return "cmp_le";
-        case IR_CMP_GE: return "cmp_ge";
-        case IR_CMP_EQ: return "cmp_eq";
-        case IR_CMP_NE: return "cmp_ne";
-        case IR_BOOL_AND: return "bool_and";
-        case IR_BOOL_OR: return "bool_or";
-        case IR_CONST_INT: return "const_int";
-        case IR_CONST_FLOAT: return "const_float";
-        case IR_CONST_STRING: return "const_string";
-        case IR_LOAD_STACK: return "load_stack";
-        case IR_STORE_STACK: return "store_stack";
-        case IR_STORE_PARAM: return "store_param";
-        case IR_SAVE_X8: return "save_x8";
-        case IR_RESTORE_X8_RESULT: return "restore_x8_result";
-        case IR_RESTORE_X8_FROM_X22: return "restore_x8_from_x22";
-        case IR_SAVE_X8_TO_X20: return "save_x8_to_x20";
-        case IR_RESTORE_X8_FROM_X20: return "restore_x8_from_x20";
-        case IR_LOAD_OFFSET: return "load_offset";
-        case IR_STORE_OFFSET: return "store_offset";
-        case IR_STORE_INDIRECT: return "store_indirect";
-        case IR_LEA: return "lea";
-        case IR_ADD_X21: return "add_x21";
-        case IR_ADD_X22: return "add_x22";
-        case IR_ADD_IMM64: return "add_imm64";
-        case IR_LOAD_EXTERNAL: return "load_external";
-        case IR_LOAD_FUNC_ADDR: return "load_func_addr";
-        case IR_SEXT: return "sext";
-        case IR_ZEXT: return "zext";
-        case IR_TRUNC: return "trunc";
-        case IR_SITOFP: return "sitofp";
-        case IR_FPTOSI: return "fptosi";
-        case IR_LOAD_GLOBAL: return "load_global";
-        case IR_STORE_GLOBAL: return "store_global";
-        case IR_SAVE_X8_TO_X22: return "save_x8_to_x22";
-        case IR_STORE_INDIRECT_X20: return "store_indirect_x20";
-        default: return "unknown";
+    if (op == IR_NOP) {
+
+        return "nop";
+
+    } else if (op == IR_LABEL) {
+
+        return "label";
+
+    } else if (op == IR_JMP) {
+
+        return "jmp";
+
+    } else if (op == IR_JMP_IF) {
+
+        return "jmp_if";
+
+    } else if (op == IR_JMP_IF_TRUE) {
+
+        return "jmp_if_true";
+
+    } else if (op == IR_RET) {
+
+        return "ret";
+
+    } else if (op == IR_RET_VOID) {
+
+        return "ret_void";
+
+    } else if (op == IR_CALL) {
+
+        return "call";
+
+    } else if (op == IR_CALL_INDIRECT) {
+
+        return "call_indirect";
+
+    } else if (op == IR_LOAD) {
+
+        return "load";
+
+    } else if (op == IR_STORE) {
+
+        return "store";
+
+    } else if (op == IR_ALLOCA) {
+
+        return "alloca";
+
+    } else if (op == IR_ADD) {
+
+        return "add";
+
+    } else if (op == IR_ADD_F) {
+
+        return "add_f";
+
+    } else if (op == IR_SUB) {
+
+        return "sub";
+
+    } else if (op == IR_SUB_F) {
+
+        return "sub_f";
+
+    } else if (op == IR_MUL) {
+
+        return "mul";
+
+    } else if (op == IR_MUL_F) {
+
+        return "mul_f";
+
+    } else if (op == IR_DIV) {
+
+        return "div";
+
+    } else if (op == IR_DIV_F) {
+
+        return "div_f";
+
+    } else if (op == IR_MOD) {
+
+        return "mod";
+
+    } else if (op == IR_NEG) {
+
+        return "neg";
+
+    } else if (op == IR_NEG_F) {
+
+        return "neg_f";
+
+    } else if (op == IR_AND) {
+
+        return "and";
+
+    } else if (op == IR_OR) {
+
+        return "or";
+
+    } else if (op == IR_XOR) {
+
+        return "xor";
+
+    } else if (op == IR_SHL) {
+
+        return "shl";
+
+    } else if (op == IR_SHR) {
+
+        return "shr";
+
+    } else if (op == IR_NOT) {
+
+        return "not";
+
+    } else if (op == IR_CMP) {
+
+        return "cmp";
+
+    } else if (op == IR_CMP_F) {
+
+        return "cmp_f";
+
+    } else if (op == IR_CMP_LT) {
+
+        return "cmp_lt";
+
+    } else if (op == IR_CMP_GT) {
+
+        return "cmp_gt";
+
+    } else if (op == IR_CMP_LE) {
+
+        return "cmp_le";
+
+    } else if (op == IR_CMP_GE) {
+
+        return "cmp_ge";
+
+    } else if (op == IR_CMP_EQ) {
+
+        return "cmp_eq";
+
+    } else if (op == IR_CMP_NE) {
+
+        return "cmp_ne";
+
+    } else if (op == IR_BOOL_AND) {
+
+        return "bool_and";
+
+    } else if (op == IR_BOOL_OR) {
+
+        return "bool_or";
+
+    } else if (op == IR_CONST_INT) {
+
+        return "const_int";
+
+    } else if (op == IR_CONST_FLOAT) {
+
+        return "const_float";
+
+    } else if (op == IR_CONST_STRING) {
+
+        return "const_string";
+
+    } else if (op == IR_LOAD_STACK) {
+
+        return "load_stack";
+
+    } else if (op == IR_STORE_STACK) {
+
+        return "store_stack";
+
+    } else if (op == IR_STORE_PARAM) {
+
+        return "store_param";
+
+    } else if (op == IR_SAVE_X8) {
+
+        return "save_x8";
+
+    } else if (op == IR_RESTORE_X8_RESULT) {
+
+        return "restore_x8_result";
+
+    } else if (op == IR_RESTORE_X8_FROM_X22) {
+
+        return "restore_x8_from_x22";
+
+    } else if (op == IR_SAVE_X8_TO_X20) {
+
+        return "save_x8_to_x20";
+
+    } else if (op == IR_RESTORE_X8_FROM_X20) {
+
+        return "restore_x8_from_x20";
+
+    } else if (op == IR_LOAD_OFFSET) {
+
+        return "load_offset";
+
+    } else if (op == IR_STORE_OFFSET) {
+
+        return "store_offset";
+
+    } else if (op == IR_STORE_INDIRECT) {
+
+        return "store_indirect";
+
+    } else if (op == IR_LEA) {
+
+        return "lea";
+
+    } else if (op == IR_ADD_X21) {
+
+        return "add_x21";
+
+    } else if (op == IR_ADD_X22) {
+
+        return "add_x22";
+
+    } else if (op == IR_ADD_IMM64) {
+
+        return "add_imm64";
+
+    } else if (op == IR_LOAD_EXTERNAL) {
+
+        return "load_external";
+
+    } else if (op == IR_LOAD_FUNC_ADDR) {
+
+        return "load_func_addr";
+
+    } else if (op == IR_SEXT) {
+
+        return "sext";
+
+    } else if (op == IR_ZEXT) {
+
+        return "zext";
+
+    } else if (op == IR_TRUNC) {
+
+        return "trunc";
+
+    } else if (op == IR_SITOFP) {
+
+        return "sitofp";
+
+    } else if (op == IR_FPTOSI) {
+
+        return "fptosi";
+
+    } else if (op == IR_LOAD_GLOBAL) {
+
+        return "load_global";
+
+    } else if (op == IR_STORE_GLOBAL) {
+
+        return "store_global";
+
+    } else if (op == IR_SAVE_X8_TO_X22) {
+
+        return "save_x8_to_x22";
+
+    } else if (op == IR_STORE_INDIRECT_X20) {
+
+        return "store_indirect_x20";
+
+    } else {
+
+        return "unknown";
+
     }
 }
 

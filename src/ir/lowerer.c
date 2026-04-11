@@ -1040,6 +1040,24 @@ static IRValue *lower_unary_expr(ASTNode *node) {
             ret_val->is_temp = true;
             return ret_val;
         }
+        case 9: {  // Unary minus
+            // If operand is a compile-time constant, negate it at compile time
+            if (operand->is_constant && operand->kind == IR_VALUE_INT) {
+                operand->data.int_val = -operand->data.int_val;
+                return operand;
+            }
+            // Otherwise, emit negate instruction
+            IRInstruction *neg_instr = ir_instr_create(IR_NEG);
+            neg_instr->result = ir_value_create(IR_VALUE_INT);
+            neg_instr->result->is_temp = true;
+            neg_instr->args[0] = operand;
+            neg_instr->num_args = 1;
+            add_instr(neg_instr);
+            return neg_instr->result;
+        }
+        case 8: {  // Unary plus - just return operand
+            return operand;
+        }
         default:
             return operand;
     }
@@ -2956,12 +2974,18 @@ static void lower_switch_stmt(ASTNode *node) {
         ld_cv->result = cv_load;
         add_instr(ld_cv);
         
-        /* Compare */
+        /* Load switch value from stack into a non-temp for comparison */
+        IRValue *sw_val2 = ir_value_create(IR_VALUE_INT);
+        sw_val2->offset = switch_slot;
+        sw_val2->param_reg = -2;
+        sw_val2->is_temp = 0;
+        
+        /* Compare: switch_val (non-temp, loaded to x10) vs case_val (temp, in x8) */
         IRInstruction *cmp = ir_instr_create(IR_CMP_EQ);
         cmp->result = ir_value_create(IR_VALUE_INT);
         cmp->result->is_temp = 1;
-        cmp->args[0] = rest->result;
-        cmp->args[1] = cv_load;
+        cmp->args[0] = sw_val2;  /* non-temp: loaded to x10 via emit_load_value */
+        cmp->args[1] = cv_load;  /* temp: already in x8 from LOAD_STACK */
         cmp->num_args = 2;
         add_instr(cmp);
         
