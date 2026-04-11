@@ -255,7 +255,18 @@ static void emit_load_value(int reg, IRValue *val) {
                 // It's a local variable on the stack - load from [x29, #offset] (frame pointer relative)
                 // val->offset contains the stack offset
                 // Always load from the stack slot - the value (whether pointer or not) is stored there
-                emit_instr("ldr\tx%d, [x29, #%d]", reg, val->offset);
+                int offset = val->offset;
+                if (offset > 32760 || offset < -4095) {
+                    // Large offset - compute address via emit_immediate
+                    emit_immediate(9, offset);
+                    emit_instr("add\tx9, x29, x9");
+                    emit_instr("ldr\tx%d, [x9]", reg);
+                } else if (offset > 504 || offset < -512) {
+                    emit_instr("add\tx9, x29, #%d", offset);
+                    emit_instr("ldr\tx%d, [x9]", reg);
+                } else {
+                    emit_instr("ldr\tx%d, [x29, #%d]", reg, offset);
+                }
             } else if (val->param_reg == -4) {
                 // Special: indicates this is a LOAD_STACK result that needs the offset from result field
                 // This case should not normally be reached
