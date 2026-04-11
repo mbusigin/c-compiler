@@ -77,6 +77,7 @@ int compile_file(const char *filename, CompileOptions *options) {
     
     
     // Semantic analysis
+    // Semantic analysis
     AnalyzeResult *result = analyzer_analyze(ast);
     
     if (options->syntax_only || result->error_count > 0) {

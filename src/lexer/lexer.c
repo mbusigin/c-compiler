@@ -246,6 +246,11 @@ static void scan_char(Token *out, Lexer *lexer) {
         else if (escape_char == '\\') char_value = '\\';
         else if (escape_char == '\'') char_value = '\'';
         else if (escape_char == '"') char_value = '"';
+        else if (escape_char == 'a') char_value = '\a';
+        else if (escape_char == 'b') char_value = '\b';
+        else if (escape_char == 'f') char_value = '\f';
+        else if (escape_char == 'v') char_value = '\v';
+        else if (escape_char == '?') char_value = '\?';
         else char_value = escape_char;
         advance(lexer); /* Escaped character */
     } else if (peek(lexer) != '\'') {
