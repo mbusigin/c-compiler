@@ -38,30 +38,28 @@ static bool is_pointer_result(ASTNode *node) {
 // Helper: check if an AST node contains a function call
 static bool contains_call(ASTNode *node) {
     if (!node) return false;
-    switch (node->type) {
-        case AST_CALL_EXPR:
-            return true;
-        case AST_BINARY_EXPR:
-            return contains_call(node->data.binary.left) || contains_call(node->data.binary.right);
-        case AST_UNARY_EXPR:
-            return contains_call(node->data.unary.operand);
-        case AST_ASSIGNMENT_EXPR:
-            return contains_call(node->data.assignment.right);
-        case AST_CONDITIONAL_EXPR:
-            return contains_call(node->data.conditional.condition) ||
-                   contains_call(node->data.conditional.then_expr) ||
-                   contains_call(node->data.conditional.else_expr);
-        case AST_ARRAY_SUBSCRIPT_EXPR:
-            return contains_call(node->data.subscript.array) || contains_call(node->data.subscript.index);
-        case AST_CAST_EXPR:
-            return contains_call(node->data.cast.operand);
-        case AST_MEMBER_ACCESS_EXPR:
-        case AST_POINTER_MEMBER_ACCESS_EXPR:
-            return contains_call(node->data.member.expr);
-        default:
-            return false;
-    }
+    if (node->type == AST_CALL_EXPR) return true;
+    if (node->type == AST_BINARY_EXPR)
+        return contains_call(node->data.binary.left) || contains_call(node->data.binary.right);
+    if (node->type == AST_UNARY_EXPR)
+        return contains_call(node->data.unary.operand);
+    if (node->type == AST_ASSIGNMENT_EXPR)
+        return contains_call(node->data.assignment.right);
+    if (node->type == AST_CONDITIONAL_EXPR)
+        return contains_call(node->data.conditional.condition) ||
+               contains_call(node->data.conditional.then_expr) ||
+               contains_call(node->data.conditional.else_expr);
+    if (node->type == AST_ARRAY_SUBSCRIPT_EXPR)
+        return contains_call(node->data.subscript.array) || contains_call(node->data.subscript.index);
+    if (node->type == AST_CAST_EXPR)
+        return contains_call(node->data.cast.operand);
+    if (node->type == AST_MEMBER_ACCESS_EXPR || node->type == AST_POINTER_MEMBER_ACCESS_EXPR)
+        return contains_call(node->data.member.expr);
+    return false;
 }
+
+
+
 
 // Simple locals tracking via hash table
 #define LOCALS_BUCKETS 32
@@ -3045,66 +3043,46 @@ static void lower_compound_stmt(ASTNode *node) {
 static void lower_statement(ASTNode *node) {
     if (!node) return;
 
-    switch (node->type) {
-        case AST_COMPOUND_STMT:
-            lower_compound_stmt(node);
-            break;
-        case AST_RETURN_STMT:
-            lower_return_stmt(node);
-            break;
-        case AST_EXPRESSION_STMT:
-            lower_expr_stmt(node);
-            break;
-        case AST_IF_STMT:
-            lower_if_stmt(node);
-            break;
-        case AST_WHILE_STMT:
-            lower_while_stmt(node);
-            break;
-        case AST_FOR_STMT:
-            lower_for_stmt(node);
-            break;
-        case AST_SWITCH_STMT:
-            lower_switch_stmt(node);
-            break;
-        case AST_VARIABLE_DECL:
-            lower_variable_decl(node);
-            break;
-        case AST_BREAK_STMT: {
-            if (loop_stack) {
-                IRInstruction *jmp = ir_instr_create(IR_JMP);
-                jmp->label = loop_stack->end_label;
-                add_instr(jmp);
-            }
-            break;
+    if (node->type == AST_COMPOUND_STMT) {
+        lower_compound_stmt(node);
+    } else if (node->type == AST_RETURN_STMT) {
+        lower_return_stmt(node);
+    } else if (node->type == AST_EXPRESSION_STMT) {
+        lower_expr_stmt(node);
+    } else if (node->type == AST_IF_STMT) {
+        lower_if_stmt(node);
+    } else if (node->type == AST_WHILE_STMT) {
+        lower_while_stmt(node);
+    } else if (node->type == AST_FOR_STMT) {
+        lower_for_stmt(node);
+    } else if (node->type == AST_SWITCH_STMT) {
+        lower_switch_stmt(node);
+    } else if (node->type == AST_VARIABLE_DECL) {
+        lower_variable_decl(node);
+    } else if (node->type == AST_BREAK_STMT) {
+        if (loop_stack) {
+            IRInstruction *jmp = ir_instr_create(IR_JMP);
+            jmp->label = loop_stack->end_label;
+            add_instr(jmp);
         }
-        case AST_CONTINUE_STMT: {
-            if (loop_stack) {
-                IRInstruction *jmp = ir_instr_create(IR_JMP);
-                // For for-loops, continue goes to increment; for while loops, to start
-                jmp->label = loop_stack->continue_label ? loop_stack->continue_label : loop_stack->start_label;
-                add_instr(jmp);
-            }
-            break;
+    } else if (node->type == AST_CONTINUE_STMT) {
+        if (loop_stack) {
+            IRInstruction *jmp = ir_instr_create(IR_JMP);
+            jmp->label = loop_stack->continue_label ? loop_stack->continue_label : loop_stack->start_label;
+            add_instr(jmp);
         }
-        case AST_CASE_STMT:
-            /* Case bodies are handled by lower_switch_stmt */
-            if (node->data.case_stmt.stmt) {
-                lower_statement(node->data.case_stmt.stmt);
-            }
-            break;
-        case AST_DEFAULT_STMT:
-            /* Default bodies are handled by lower_switch_stmt */
-            if (node->data.default_stmt.stmt) {
-                lower_statement(node->data.default_stmt.stmt);
-            }
-            break;
-        default:
-            // Handle expression nodes (for loop init can be an expression)
-            if (node->type >= AST_BINARY_EXPR && node->type <= AST_COMMA_EXPR) {
-                lower_expression(node);
-            }
-            break;
+    } else if (node->type == AST_CASE_STMT) {
+        if (node->data.case_stmt.stmt) {
+            lower_statement(node->data.case_stmt.stmt);
+        }
+    } else if (node->type == AST_DEFAULT_STMT) {
+        if (node->data.default_stmt.stmt) {
+            lower_statement(node->data.default_stmt.stmt);
+        }
+    } else {
+        if (node->type >= AST_BINARY_EXPR && node->type <= AST_COMMA_EXPR) {
+            lower_expression(node);
+        }
     }
 }
 
